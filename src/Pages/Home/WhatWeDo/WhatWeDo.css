@@ -1,0 +1,92 @@
+.what-section {
+  padding: 60px 20px;
+
+  text-align: center;
+}
+
+.what-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(25px, 1fr));
+  
+  gap: 2rem;
+  margin-top: 3rem;
+  
+}
+.card-overley{
+ border: 2px solid #e2e8f0; /* Light gray border */
+  transition: transform 0.3s, box-shadow 0.3s;
+    border-radius: 16px;
+   
+  padding: 1rem; /* Add padding for content spacing */
+  height: 100%; /* Fill the step container */
+  display: flex;
+  flex-direction: column;
+  background: white; /* Ensure background is visible */
+  box-sizing: border-box; /* Include border in width calculation */
+
+}
+.card-image {
+  width: 200px;
+  height: 200px;
+  object-fit: contain;
+
+}
+.card {
+ border: 2px solid #e2e8f0; /* Light gray border */
+  transition: transform 0.3s, box-shadow 0.3s;
+    border-radius: 16px;
+   
+  padding: 0.3rem; /* Add padding for content spacing */
+  height: 100%; /* Fill the step container */
+  display: flex;
+  flex-direction: column;
+  background: #f4f8fc;
+  text-align: left; /* Ensure background is visible */
+  box-sizing: border-box; /* Include border in width calculation */
+}
+
+.card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 15px 45px rgba(99, 102, 241, 0.2);
+}
+
+
+
+.card-title-wwd {
+  color: #2563eb;
+  font-size: 1.2rem;
+  margin: 1rem 0 0.5rem;
+}
+
+.card-description {
+  color: #64748b;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+  .highlight {
+    font-size: 1.8rem;
+  }
+  .card-title {
+    font-size: 1.2rem;
+  }
+  .card-description {
+    font-size: 0.9rem;
+  }
+}
+
+.features-title {
+  font-size: 3.25rem;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 0rem;
+  color: #1f2937;
+}
+
+.highlight {
+  color: #2563eb;
+  font-size: 3.35rem;
+  font-weight: bold;
+}

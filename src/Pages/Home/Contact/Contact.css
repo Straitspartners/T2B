@@ -1,0 +1,309 @@
+/* Form Section Styles */
+.form-section {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 40px 20px;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, sans-serif;
+}
+.contact-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 60px 20px;
+}
+
+.contact-left {
+  flex: 1;
+  min-width: 300px;
+  max-width: 600px;
+}
+.chat-icon-image{
+  width: 250px;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.contact-right {
+    flex: 1 1;
+    min-width: 450px;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.step {
+  background: #f4f8fc;
+  border-radius: 16px;
+  padding: 0.3rem;
+border: 2px solid #e2e8f0; /* Light gray border */
+  box-shadow: 0px 16px 40px rgba(92, 74, 225, 0.2); /* Purple glow effect */
+  transition: transform 0.3s, box-shadow 0.3s;
+  text-align: left;
+}
+.step-overlay {
+ border: 2px solid #e2e8f0; /* Light gray border */
+  transition: transform 0.3s, box-shadow 0.3s;
+    border-radius: 16px;
+   
+  padding: 1rem; /* Add padding for content spacing */
+  height: 100%; /* Fill the step container */
+  display: flex;
+  flex-direction: column;
+  background: white; /* Ensure background is visible */
+  box-sizing: border-box; /* Include border in width calculation */
+}
+.form-section p {
+  text-align: center;
+  margin-bottom: 32px;
+  font-size: 16px;
+  color: #666;
+}
+
+/* Contact Form Styles */
+
+/* Form Row Layout */
+.form-row {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+/* Form Groups */
+.form-group {
+  margin-bottom: 24px;
+}
+
+.form-group.full-width {
+  width: 100%;
+}
+
+/* Labels */
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #333;
+  font-size: 18px;
+}
+
+/* Input Styles */
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid #e1e5e9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  background-color: transparent !important;
+  transition: border-color 0.2s ease;
+  box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+.form-group input::placeholder,
+.form-group textarea::placeholder {
+  color: #adb5bd;
+  font-size: 14px;
+}
+
+/* Textarea Specific */
+.form-group textarea {
+  resize: vertical;
+  min-height: 120px;
+  font-family: inherit;
+}
+
+/* Consent Group */
+.consent-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 0 4px;
+}
+
+.consent-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: #007bff;
+}
+
+.consent-label {
+  font-size: 14px;
+  color: #666;
+  line-height: 1.4;
+  cursor: pointer;
+  margin: 0;
+}
+
+/* Submit Button */
+.submit-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 12px 32px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  width: auto;
+  min-width: 140px;
+}
+
+.submit-btn:hover {
+  background: #0056b3;
+}
+
+.submit-btn:active {
+  transform: translateY(1px);
+}
+
+/* ContactSection.css */
+.options-section {
+    padding: 10px 20px;
+    display: flex
+;
+    /* justify-content: center; */
+    /* align-items: center; */
+    /* margin: 0 auto; */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.options-section h3 {
+  font-size: 48px;
+  font-weight: 400;
+  text-align: center;
+  margin-bottom: 60px;
+  color: #333;
+  letter-spacing: -0.5px;
+}
+.contact-title{
+  font-size: 30px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: #111;
+}
+.options-grid {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  gap: 30px;
+  align-items: start;
+}
+
+.option-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 0;
+}
+
+.icon-wrapper {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.email-icon {
+    background: linear-gradient(to bottom, #004CD3, #327AFA);
+}
+
+.call-icon {
+  background: linear-gradient(to bottom, #004CD3, #327AFA);
+}
+
+.chat-icon {
+  background: linear-gradient(to bottom, #004CD3, #327AFA);
+}
+
+.content {
+  flex: 1;
+}
+
+.content h4 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: #111;
+}
+
+.description {
+  font-size: 16px;
+  color: #666;
+  margin: 0 0 4px 0;
+  line-height: 1.4;
+}
+
+.contact-info {
+  font-size: 16px;
+  color: #2563eb;
+  margin: 0;
+  font-weight: 500;
+}
+
+.chat-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.chat-link:hover {
+  text-decoration: underline;
+}
+
+/* Responsive adjustments */
+@media (max-width: 992px) {
+  .options-grid {
+    grid-template-columns: 1fr;
+    gap: 30px;
+  }
+}
+
+@media (max-width: 768px) {
+  .options-section {
+    padding: 40px 20px;
+  }
+
+  .options-section h3 {
+    font-size: 36px;
+    margin-bottom: 40px;
+  }
+
+  .option-card {
+    gap: 16px;
+  }
+
+  .icon-wrapper {
+    width: 50px;
+    height: 50px;
+  }
+
+  .content h4 {
+    font-size: 24px;
+  }
+}

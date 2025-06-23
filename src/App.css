@@ -1,0 +1,12 @@
+
+.features-title {
+  font-size: 3.25rem;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 3rem;
+  color: #1f2937;
+}
+
+.features-title .highlight {
+  color: #2563eb;
+  font-size: 3.35rem;}

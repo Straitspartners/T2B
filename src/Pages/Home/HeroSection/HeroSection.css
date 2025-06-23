@@ -1,0 +1,78 @@
+.hero-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4rem 2rem ;
+  margin: 20px 50px 20px 50px ; 
+background: linear-gradient(to bottom, #0a54d4 0%, #6da2e7 50%, #0f59d8 100%);
+
+border-radius: 30px; /* optional: matches the rounded corners */
+
+  color: white;
+}
+.hero-content {
+  max-width: 50%;
+}
+input{
+  /* padding: 0px !important; */
+  margin: 0px !important;
+}
+.hero-content h1  {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.hero-content p {
+  font-size: 1.2rem;
+  margin-bottom: 1.5rem;
+  text-align: left;
+}
+.hero-input input {
+  padding: 0.5rem;
+  margin-right: 0.5rem;
+}
+.hero-image img {
+  max-width: 100%;
+  height: auto;
+}
+.hero-input {
+  display: flex;
+  align-items: center;
+  background-color: white;
+  border-radius: 9999px; /* Fully rounded pill shape */
+  overflow: hidden;
+  max-width: 300px; /* Compact size while fitting both input and button */
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+.hero-img{
+
+ display: block;
+}
+.hero-input input {
+  flex: 1;
+  min-width: 0; /* Allow input to shrink below its content size */
+  padding: 13px 13px;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  background: transparent;
+}
+
+.hero-input button {
+  padding: 12px 12px; /* Reduced horizontal padding for more compact design */
+  margin: 4px; /* Small margin for visual separation */
+  background-color: #0057D9; /* Matching blue */
+  color: white;
+  font-size: 16px;
+  border: none;
+  cursor: pointer;
+  border-radius: 9999px; /* Match container radius */
+  transition: background-color 0.3s;
+  flex-shrink: 0; /* Prevent button from shrinking */
+  white-space: nowrap; /* Prevent button text from wrapping */
+}
+
+.hero-input button:hover {
+  background-color: #0045b5; /* Slightly darker on hover */
+}
