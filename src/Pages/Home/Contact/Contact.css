@@ -159,7 +159,7 @@ border: 2px solid #e2e8f0; /* Light gray border */
 
 /* Submit Button */
 .submit-btn {
-  background: #007bff;
+  background: linear-gradient(to bottom, #004cd3, #327afa);
   color: white;
   border: none;
   padding: 12px 32px;
