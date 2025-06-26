@@ -1,8 +1,8 @@
 /* Form Section Styles */
-.form-section {
+.c-form-section {
   max-width: 600px;
   margin: 0 auto;
-  padding: 40px 20px;
+  padding: 30px 20px;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
     Ubuntu, Cantarell, sans-serif;
@@ -22,7 +22,7 @@
   min-width: 300px;
   max-width: 600px;
 }
-.chat-icon-image{
+.chat-icon-image {
   width: 250px;
   height: 150px;
   display: flex;
@@ -30,27 +30,27 @@
   justify-content: center;
 }
 .contact-right {
-    flex: 1 1;
-    min-width: 450px;
-    max-width: 500px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+  flex: 1 1;
+  min-width: 450px;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 .step {
   background: #f4f8fc;
   border-radius: 16px;
   padding: 0.3rem;
-border: 2px solid #e2e8f0; /* Light gray border */
+  border: 2px solid #e2e8f0; /* Light gray border */
   box-shadow: 0px 16px 40px rgba(92, 74, 225, 0.2); /* Purple glow effect */
   transition: transform 0.3s, box-shadow 0.3s;
   text-align: left;
 }
 .step-overlay {
- border: 2px solid #e2e8f0; /* Light gray border */
+  border: 2px solid #e2e8f0; /* Light gray border */
   transition: transform 0.3s, box-shadow 0.3s;
-    border-radius: 16px;
-   
+  border-radius: 16px;
+
   padding: 1rem; /* Add padding for content spacing */
   height: 100%; /* Fill the step container */
   display: flex;
@@ -160,7 +160,7 @@ border: 2px solid #e2e8f0; /* Light gray border */
 /* Submit Button */
 .submit-btn {
   background: linear-gradient(to bottom, #004cd3, #327afa);
-  color: white;
+  color: rgb(102, 21, 21);
   border: none;
   padding: 12px 32px;
   border-radius: 6px;
@@ -182,13 +182,13 @@ border: 2px solid #e2e8f0; /* Light gray border */
 
 /* ContactSection.css */
 .options-section {
-    padding: 10px 20px;
-    display: flex
-;
-    /* justify-content: center; */
-    /* align-items: center; */
-    /* margin: 0 auto; */
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  padding: 10px 20px;
+  display: flex;
+  /* justify-content: center; */
+  /* align-items: center; */
+  /* margin: 0 auto; */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, sans-serif;
 }
 
 .options-section h3 {
@@ -199,7 +199,7 @@ border: 2px solid #e2e8f0; /* Light gray border */
   color: #333;
   letter-spacing: -0.5px;
 }
-.contact-title{
+.contact-title {
   font-size: 30px;
   font-weight: 600;
   margin-bottom: 24px;
@@ -230,15 +230,15 @@ border: 2px solid #e2e8f0; /* Light gray border */
 }
 
 .email-icon {
-    background: linear-gradient(to bottom, #004CD3, #327AFA);
+  background: linear-gradient(to bottom, #004cd3, #327afa);
 }
 
 .call-icon {
-  background: linear-gradient(to bottom, #004CD3, #327AFA);
+  background: linear-gradient(to bottom, #004cd3, #327afa);
 }
 
 .chat-icon {
-  background: linear-gradient(to bottom, #004CD3, #327AFA);
+  background: linear-gradient(to bottom, #004cd3, #327afa);
 }
 
 .content {

@@ -14,7 +14,7 @@
 
 /* Header Styles */
 .header {
-  margin-bottom: 2rem;
+  margin-bottom: 0rem;
 }
 
 .main-title {
@@ -28,7 +28,7 @@
 /* Step Indicators */
 .step-indicators {
   display: flex;
-  width: 90%;
+  width: 100%;
   justify-content: center;
   align-items: flex-start;
   gap: 0;
@@ -111,11 +111,8 @@
 
 /* Main Content */
 .main-content {
-  background-color: white;
-  border-radius: 1rem;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   
-  width: 100%;
+ 
 }
 
 .content-header {
@@ -142,8 +139,10 @@
 .content-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 3rem;
+  border-radius: 25px;
+  gap: 0rem;
   align-items: start;
+  border: 1px solid #070707;
 }
 
 @media (max-width: 1024px) {
@@ -161,10 +160,10 @@
 }
 
 .section {
-  background-color: #f8fafc;
+
   padding: 1.5rem;
-  border-radius: 0.75rem;
-  border-left: 4px solid #e5e7eb;
+  
+  border-right: 1px solid #1d1d1d;
 }
 
 .section-title {
@@ -221,7 +220,7 @@
 }
 
 .help-guide-button {
-  background-color: #2563eb;
+    background: linear-gradient(to bottom, #004cd3, #327afa);
   color: white;
   border: none;
   padding: 0.75rem 1.5rem;
@@ -238,17 +237,17 @@
 
 /* Form Section */
 .form-section {
-  background-color: #f8fafc;
+ 
   width:100%;
+    padding: 2rem;
+ 
 
-  border-radius: 0.75rem;
-  border: 1px solid #e5e7eb;
 }
 
 .form-container {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+
 }
 
 .form-title {
@@ -271,7 +270,7 @@
 }
 
 .field-input {
-  width: 100%;
+  width: 20%;
   padding: 0.75rem 1rem;
   border: 1px solid #d1d5db;
   border-radius: 0.5rem;
@@ -292,10 +291,14 @@
 
 .form-actions {
   margin-top: 1rem;
+    display: flex;  
+    justify-content: center;
+    gap: 1rem;
+    
 }
 
 .connect-button {
-  background-color: #2563eb;
+    background: linear-gradient(to bottom, #004cd3, #327afa);
   color: white;
   border: none;
   padding: 0.875rem 2rem;
@@ -304,7 +307,7 @@
   cursor: pointer;
   transition: all 0.2s ease;
   font-size: 0.875rem;
-  width: 100%;
+  width: 40%;
 }
 
 .connect-button:hover {
@@ -340,7 +343,7 @@
 }
 
 .complete-setup-button {
-  background-color: #2563eb;
+    background: linear-gradient(to bottom, #004cd3, #327afa);
   color: white;
   border: none;
   padding: 0.875rem 2rem;
@@ -440,7 +443,7 @@
 }
 
 .continue-button {
-  background-color: #2563eb;
+   background: linear-gradient(to bottom, #004cd3, #327afa);
   color: white;
 }
 

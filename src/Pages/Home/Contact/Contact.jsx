@@ -37,7 +37,7 @@ const ContactForm = () => {
 
       <div className="contact-wrapper">
         <div className="contact-left">
-          <section id="contact" className="form-section">
+          <section id="contact" className="c-form-section">
             <div className="contact-form" onSubmit={handleSubmit}>
               <div className="form-row">
                 <div className="form-group">

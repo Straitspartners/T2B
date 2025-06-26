@@ -1,11 +1,21 @@
 import React, { useState } from 'react';
 import './Setup.css';
-
+import axios from 'axios';
 
 
 const SyncDataFlow = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState([]);
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState('');
+
+const [formData, setFormData] = useState({
+  client_id: '',
+  client_secret: '',
+  access_token: '',
+  refresh_token: '',
+  organization_id: ''
+});
 
   const steps = [
     {
@@ -84,13 +94,14 @@ const SyncDataFlow = () => {
           ]
         }
       ],
-      formFields: [
-        { label: "Client ID", placeholder: "Enter your Client ID" },
-        { label: "Client Secret", placeholder: "Enter your Client ID" },
-        { label: "Access Token", placeholder: "Enter your Access Token" },
-        { label: "Refresh Token", placeholder: "Enter your Refresh Token" },
-        { label: "Organization ID", placeholder: "Enter" }
-      ]
+    formFields: [
+  { label: "Client ID", name: "client_id", placeholder: "Enter your Client ID" },
+  { label: "Client Secret", name: "client_secret", placeholder: "Enter your Client Secret" },
+  { label: "Access Token", name: "access_token", placeholder: "Enter your Access Token" },
+  { label: "Refresh Token", name: "refresh_token", placeholder: "Enter your Refresh Token" },
+  { label: "Organization ID", name: "organization_id", placeholder: "Enter your Organization ID" }
+]
+
     },
     {
       title: "Connect Tally Account",
@@ -130,12 +141,36 @@ const SyncDataFlow = () => {
 
   const stepTitles = ["Zoho Books Integration", "Tally Integration", "SyncSonic Dashboard"];
 
-  const handleNext = () => {
-    if (currentStep < steps.length - 1) {
+const handleNext = async () => {
+  if (currentStep === 0) {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await axios.post(
+        'https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/connect-zoho/',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      console.log('Success:', response.data);
       setCompletedSteps([...completedSteps, currentStep]);
       setCurrentStep(currentStep + 1);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || 'Failed to connect');
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
-  };
+  } else {
+    setCompletedSteps([...completedSteps, currentStep]);
+    setCurrentStep(currentStep + 1);
+  }
+};
+
 
   const handleBack = () => {
     if (currentStep > 0) {
@@ -229,10 +264,13 @@ const SyncDataFlow = () => {
                     <div key={fieldIndex} className="form-field">
                       <label className="field-label">{field.label} :</label>
                       <input
-                        type="text"
-                        className="field-input"
-                        placeholder={field.placeholder}
-                      />
+  type="text"
+  className="field-input"
+  placeholder={field.placeholder}
+  value={formData[field.name]}
+  onChange={(e) => setFormData({ ...formData, [field.name]: e.target.value })}
+/>
+
                     </div>
                   ))}
                   <div className="form-actions">
@@ -280,7 +318,9 @@ const SyncDataFlow = () => {
         </div>
         
       </div>
-      
+      {error && <div className="error-message">{error}</div>}
+{loading && <div className="loading-message">Connecting to Zoho...</div>}
+
     </div>
   );
 };

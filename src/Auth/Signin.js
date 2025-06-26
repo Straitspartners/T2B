@@ -1,62 +1,107 @@
 import React, { useState } from "react";
-import Tallylogo from "D:/tally-to-books/src/assets/tally logo-02 2.png";
-import Books from "D:/tally-to-books/src/assets/books.png";
-import "./Auth.css"; // Assuming you have a CSS file for styles
+import Tallylogo from "../assets/tally logo-02 2.png";
+import Books from "../assets/books.png";
+import "./Auth.css";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 
 const AuthPage = () => {
   const [isSignIn, setIsSignIn] = useState(true);
+  const [loading, setLoading] = useState(false);
+
   const [signInForm, setSignInForm] = useState({
     email: "",
     password: "",
     remember: false,
   });
+
   const [signUpForm, setSignUpForm] = useState({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
   });
-const navigate = useNavigate();
+
+  const navigate = useNavigate();
+
   const handleSignInChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setSignInForm((f) => ({
-      ...f,
+    setSignInForm((prev) => ({
+      ...prev,
       [name]: type === "checkbox" ? checked : value,
     }));
   };
 
   const handleSignUpChange = (e) => {
     const { name, value } = e.target;
-    setSignUpForm((f) => ({ ...f, [name]: value }));
+    setSignUpForm((prev) => ({ ...prev, [name]: value }));
   };
-const handleSignInSubmit = (e) => {
-  e.preventDefault();
-  console.log(
-    "Sign In - Email:",
-    signInForm.email,
-    "Password:",
-    signInForm.password,
-    "Remember Me:",
-    signInForm.remember
-  );
-  navigate("/Setup"); // Redirect to dashboard after sign-in
-};
-  const handleSignUpSubmit = (e) => {
+
+  const handleSignInSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+
+    try {
+      const response = await axios.post(
+        "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/login/",
+        {
+          identifier: signInForm.email,
+          password: signInForm.password,
+        }
+      );
+
+      const { token, user } = response.data;
+      if (token) localStorage.setItem("authToken", token);
+      if (user) localStorage.setItem("userData", JSON.stringify(user));
+
+      alert("Sign in successful!");
+      navigate("/Setup");
+    } catch (error) {
+      console.error("Sign-in error:", error);
+      alert(error.response?.data?.message || "Sign in failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUpSubmit = async (e) => {
+    e.preventDefault();
+
     if (signUpForm.password !== signUpForm.confirmPassword) {
       alert("Passwords do not match!");
       return;
     }
-    console.log(
-      "Sign Up - Name:",
-      signUpForm.name,
-      "Email:",
-      signUpForm.email,
-      "Password:",
-      signUpForm.password
-    );
+
+    setLoading(true);
+
+    try {
+      const response = await axios.post(
+        "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/register/",
+        {
+          username: signUpForm.name,
+          email: signUpForm.email,
+          password: signUpForm.password,
+          confirm_password: signUpForm.confirmPassword,
+        }
+      );
+
+      alert("Registration successful! Please log in.");
+      setIsSignIn(true); // switch to sign-in
+    } catch (error) {
+      console.error("Signup backend error:", error.response?.data);
+      if (error.response?.data?.errors) {
+        const messages = Object.values(error.response.data.errors)
+          .flat()
+          .join("\n");
+        alert(messages);
+      } else {
+        alert(error.response?.data?.message || "Registration failed.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
+
 
   return (
     <div className="sync-container">
@@ -133,7 +178,7 @@ const handleSignInSubmit = (e) => {
           </div>
 
           {isSignIn ? (
-            <div className="form">
+            <form className="form" onSubmit={handleSignInSubmit}>
               <label>Email id :</label>
               <div className="input-wrapper">
                 <svg
@@ -152,6 +197,7 @@ const handleSignInSubmit = (e) => {
                   value={signInForm.email}
                   onChange={handleSignInChange}
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -173,6 +219,7 @@ const handleSignInSubmit = (e) => {
                   value={signInForm.password}
                   onChange={handleSignInChange}
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -183,10 +230,11 @@ const handleSignInSubmit = (e) => {
                     name="remember"
                     checked={signInForm.remember}
                     onChange={handleSignInChange}
+                    disabled={loading}
                   />
                   Remember Password
                 </label>
-                <a href="/setup" className="forgot-link">
+                <a href="/forgot-password" className="forgot-link">
                   Forgot Password ?
                 </a>
               </div>
@@ -194,9 +242,9 @@ const handleSignInSubmit = (e) => {
               <button
                 type="submit"
                 className="btn-blue"
-                onClick={handleSignInSubmit}
+                disabled={loading}
               >
-                Sign In
+                {loading ? "Signing In..." : "Sign In"}
               </button>
 
               <div className="divider">Or Continue With</div>
@@ -205,6 +253,7 @@ const handleSignInSubmit = (e) => {
                 type="button"
                 className="google-btn"
                 aria-label="Sign in with Google"
+                disabled={loading}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24">
                   <path
@@ -226,9 +275,9 @@ const handleSignInSubmit = (e) => {
                 </svg>
                 Google
               </button>
-            </div>
+            </form>
           ) : (
-            <div className="form">
+            <form className="form" onSubmit={handleSignUpSubmit}>
               <label>Your Account Name :</label>
               <div className="input-wrapper">
                 <svg
@@ -247,6 +296,7 @@ const handleSignInSubmit = (e) => {
                   value={signUpForm.name}
                   onChange={handleSignUpChange}
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -268,6 +318,7 @@ const handleSignInSubmit = (e) => {
                   value={signUpForm.email}
                   onChange={handleSignUpChange}
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -290,6 +341,7 @@ const handleSignInSubmit = (e) => {
                   onChange={handleSignUpChange}
                   minLength="8"
                   required
+                  disabled={loading}
                 />
               </div>
 
@@ -311,15 +363,16 @@ const handleSignInSubmit = (e) => {
                   value={signUpForm.confirmPassword}
                   onChange={handleSignUpChange}
                   required
+                  disabled={loading}
                 />
               </div>
 
               <button
                 type="submit"
                 className="btn-blue"
-                onClick={handleSignUpSubmit}
+                disabled={loading}
               >
-                Create Account
+                {loading ? "Creating Account..." : "Create Account"}
               </button>
 
               <div className="divider">Or Create With</div>
@@ -328,6 +381,7 @@ const handleSignInSubmit = (e) => {
                 type="button"
                 className="google-btn"
                 aria-label="Sign up with Google"
+                disabled={loading}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24">
                   <path
@@ -349,7 +403,7 @@ const handleSignInSubmit = (e) => {
                 </svg>
                 Signup with Google
               </button>
-            </div>
+            </form>
           )}
         </div>
       </div>
