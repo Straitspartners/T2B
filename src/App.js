@@ -1,7 +1,7 @@
 import './App.css';
 import { HashRouter as Router, Routes, Route } from 'react-router-dom';
 import Signin from './Auth/Signin';
-import Nav from './Pages/Home/Nav/Navigation';
+import Nav from './components/Nav/Navigation';
 import Herosection from './Pages/Home/HeroSection/HeroSection';
 import Services from './Pages/Home/Services/Services';
 import Whatwedo from './Pages/Home/WhatWeDo/WhatWeDo';
@@ -10,6 +10,8 @@ import Contact from './Pages/Home/Contact/Contact';
 import Faq from './Pages/Home/FAQ/FAQ';
 import Footer from './Pages/Home/Footer/Footer';
 import Setup from './Pages/Home/Setup/Setup';
+import Dashboard from './Pages/Home/Dashboard/Dashboard';
+import Sidebar  from './components/Sidebar';
 // Home page with Nav and Footer
 function HomePage() {
   return (
@@ -36,6 +38,11 @@ function App() {
           <Route path="/signin" element={<Signin />} />
           <Route path="/setup" element={<Setup />} />
           <Route path="*" element={<div>Page Not Found</div>} />
+
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/sidebar" element={<Sidebar />} />
+
+
         </Routes>
       </Router>
     </div>

@@ -43,7 +43,7 @@ const AuthPage = () => {
 
     try {
       const response = await axios.post(
-        "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/login/",
+        "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/generate_token/",
         {
           identifier: signInForm.email,
           password: signInForm.password,
@@ -51,7 +51,7 @@ const AuthPage = () => {
       );
 
       const { token, user } = response.data;
-      if (token) localStorage.setItem("authToken", token);
+      if (token) sessionStorage.setItem("authToken", token);
       if (user) localStorage.setItem("userData", JSON.stringify(user));
 
       alert("Sign in successful!");
