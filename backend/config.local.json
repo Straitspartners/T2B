@@ -1,0 +1,6 @@
+{
+    "tally_url": "http://localhost:9000",
+    "django_api_url": "http://127.0.0.1:8000/api/users/ledgers/",
+    "django_url_vendors": "http://127.0.0.1:8000/api/users/vendors/",
+    "auth_url": "http://127.0.0.1:8000/api/generate_token_agent/"
+}

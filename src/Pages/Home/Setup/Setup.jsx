@@ -6,7 +6,6 @@ const SyncDataFlow = () => {
   const [currentStep, setCurrentStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [snackbarAlert, setSnackbarAlert] = useState({ show: false, message: '', type: 'error' });
 
   // Form data only for step 0 (Zoho Books Integration)
@@ -146,22 +145,20 @@ const SyncDataFlow = () => {
       const emptyFields = requiredFields.filter(field => !formData[field]?.trim());
       
       if (emptyFields.length > 0) {
-       showSnackbarAlert(`Please fill in the following required fields:\n${emptyFields.join(', ')}`);
-return;
+        showSnackbarAlert(`Please fill in the following required fields:\n${emptyFields.join(', ')}`);
         return;
       }
 
       // API call for Zoho Books integration
       setLoading(true);
-      setError('');
       
       try {
-        const authToken = sessionStorage.getItem('authToken');
+        const authToken = localStorage.getItem('authToken');
         
         // Debug: Check if auth token exists
         if (!authToken) {
-          setError('Authentication token not found. Please login again.');
           setLoading(false);
+          showSnackbarAlert('Authentication token not found. Please login again.');
           return;
         }
 
@@ -169,12 +166,12 @@ return;
         console.log('Form data:', formData);
 
         const response = await axios.post(
-          'https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/connect-zoho/',
+          'http://127.0.0.1:5000/T2B/api/connect-zoho',
           formData,
           {
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Token ${authToken}`
+              'Authorization': `Bearer ${authToken}`
             }
           }
         );
@@ -260,7 +257,7 @@ return;
  
     
     console.log('Redirecting to dashboard...');
-    navigate('/dashboard');
+    navigate('/quick-migration');
 };
 
   const StepIndicator = ({ stepIndex, isActive, isCompleted }) => (
@@ -284,7 +281,7 @@ return;
       <div className="sync-data-wrapper">
         {/* Header */}
         <div className="header">
-          <h1 className="main-title">Sync Sonic</h1>
+          <h1 className="logo">Tally2books</h1>
           
           {/* Step Indicators */}
           <div className="step-indicators">

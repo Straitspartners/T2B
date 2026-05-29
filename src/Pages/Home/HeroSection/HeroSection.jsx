@@ -1,6 +1,5 @@
 import './HeroSection.css';
-import Heroimg from 'D:/tally-to-books/src/assets/Hero-img.png';
-import Hero from 'D:/tally-to-books/src/assets/hero.png'
+import Hero from '../../../assets/hero.png';
 const HeroSection = () => (
   <section id="hero" className="hero-section">
     <div className="hero-content">

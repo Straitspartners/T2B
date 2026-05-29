@@ -71,6 +71,11 @@ const ZohoBooksInterface = () => {
     return `-500`;
   };
 
+  void migrationData;
+  void migrationHistory;
+  void formatCurrency;
+  void formatHistoryAmount;
+
   return (
     <div className="zoho-container">
       <div className="content-wrapper">

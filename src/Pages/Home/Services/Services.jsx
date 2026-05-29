@@ -130,7 +130,7 @@ const Features = () => {
               </div>
               <div className="card-text">
                 <div className="card-header">
-                  <div className="card-number blue " >4</div>
+                  <div className="card-number blue " >2</div>
                   <h3 className="card-title">Custom Configuration</h3>
                 </div>
                 <ul className="feature-list">

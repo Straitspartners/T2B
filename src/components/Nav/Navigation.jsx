@@ -7,19 +7,19 @@ const Navbar = () => {
   const navigate = useNavigate();
 
   const handleGetStarted = () => {
-    navigate('/Signin');
+    navigate('/signin');
   };
 
   return (
     <nav className="navbar">
       <div className="nav-left">
-        <div className="logo">Sync Sonic</div>
+        <div className="logo">Tally2Books</div>
       </div>
       <ul className="nav-center">
         <li><a className="active" href="#hero">Home</a></li>
         <li><a href="#services">Services</a></li>
         <li><a href="#whatwedo">What We Do</a></li>
-        <li><a href="#MigrationProcess">Migration Process</a></li>
+        <li><a href="#migration-process">Migration Process</a></li>
         <li><a href="#support">Support</a></li>
       </ul>
       <div className="nav-right">

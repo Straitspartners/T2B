@@ -18,7 +18,7 @@
 .sync-left {
   flex: 0.4;
   
-  background-image: url("D:/tally-to-books/src/assets/signin-bg.png");
+  background-image: url("../assets/signin-bg.png");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -153,6 +153,10 @@
   border-radius: 12px;
   max-width: 450px;
   width: 100%;
+   min-height: 520px;   /* important */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .header {
@@ -205,6 +209,24 @@
 /* Form Elements */
 .form {
   width: 100%;
+   animation: fadeIn 0.25s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.form-container {
+  width: 100%;
+  min-height: 420px;
+  transition: all 0.3s ease;
 }
 
 label {

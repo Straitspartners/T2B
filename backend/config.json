@@ -1,0 +1,6 @@
+{
+    "tally_url": "http://localhost:9000",
+    "django_api_url": "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/ledgers/",
+    "django_url_vendors": "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/vendors/",
+    "auth_url": "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/generate_token_agent/"
+}

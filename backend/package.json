@@ -1,0 +1,9 @@
+{
+  "name": "tally-to-books-backend-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "python python_agent.py",
+    "dev": "python python_agent.py"
+  }
+}

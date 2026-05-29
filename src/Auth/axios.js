@@ -1,25 +1,45 @@
-
-// src/api/axios.js
 import axios from "axios";
-// const baseURL = "http://localhost:5000"
 
-const baseURL = "https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net"
-
-const api = axios.create({
-  baseURL: baseURL, // Change to your backend URL
-  timeout: 10000, // 10 seconds timeout
+const axiosInstance = axios.create({
+  baseURL: "http://127.0.0.1:5000/T2B/api", 
+  timeout: 30000,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-// Interceptor to handle errors globally
-api.interceptors.response.use(
-  response => response,
-  error => {
-    console.error("API Error:", error);
+// ✅ ADD THIS — attaches token to every request
+axiosInstance.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// your existing response interceptor (keep as is)
+axiosInstance.interceptors.response.use(
+  (response) => response,
+
+  async (error) => {
+    const config = error.config;
+
+    if (
+      config &&
+      !config._retry &&
+      (error.code === "ECONNABORTED" || !error.response)
+    ) {
+      config._retry = true;
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 3000)
+      );
+
+      return axiosInstance(config);
+    }
+
     return Promise.reject(error);
   }
 );
 
-export default api;
+export default axiosInstance;

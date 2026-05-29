@@ -20,106 +20,6 @@ body {
   background-color: #f8fafc;
 }
 
-/* Sidebar Styles */
-.sidebar {
-  width: 240px;
-  background-color: #ffffff;
-  border-right: 1px solid #e5e7eb;
-  display: flex;
-  flex-direction: column;
-  padding: 20px 0;
-}
-
-.sidebar-header {
-  padding: 0 20px 30px;
-}
-
-.logo {
-  font-size: 24px;
-  font-weight: 700;
-  color: #3b82f6;
-  font-style: italic;
-}
-
-.sidebar-nav {
-  flex: 1;
-  padding: 0 20px;
-}
-
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 16px;
-  border: none;
-  background: none;
-  color: #6b7280;
-  font-size: 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-bottom: 4px;
-}
-
-.nav-item:hover {
-  background-color: #f3f4f6;
-  color: #374151;
-}
-
-.nav-item.active {
-  background-color: #dbeafe;
-  color: #3b82f6;
-  font-weight: 500;
-}
-
-.sidebar-support {
-  padding: 20px;
-  border-top: 1px solid #e5e7eb;
-}
-
-.sidebar-support h3 {
-  font-size: 12px;
-  font-weight: 600;
-  color: #9ca3af;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-}
-
-.sidebar-upgrade {
-  padding: 20px;
-  text-align: center;
-}
-
-.upgrade-icon {
-  margin-bottom: 16px;
-}
-
-.triangle {
-  width: 0;
-  height: 0;
-  border-left: 25px solid transparent;
-  border-right: 25px solid transparent;
-  border-bottom: 40px solid #3b82f6;
-  margin: 0 auto;
-}
-
-.upgrade-btn {
-  background-color: #3b82f6;
-  color: white;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.upgrade-btn:hover {
-  background-color: #2563eb;
-}
 
 /* Main Content Styles */
 .main-content {
@@ -204,6 +104,58 @@ body {
 
 .stat-card.yellow {
   background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+}
+.stat-card.yellow1 {
+  background-color: white;
+}
+.sync-button {
+  background: linear-gradient(180deg, #3a8dff 0%, #1c64f2 100%);
+  color: white;
+  padding: 10px 24px;
+  border: none;
+  border-radius: 9999px; /* Fully rounded */
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 15px;
+  cursor: pointer;
+  box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+  transition: background 0.3s ease, transform 0.2s ease;
+}
+
+.sync-button-container {
+
+  bottom: 20px; /* adjust as needed */
+  right: 20px;  /* adjust as needed */
+}
+
+.help-description{
+  font-size: 14px;
+  color: #6b7280;
+  margin-top: 8px;
+  line-height: 2.5;
+}
+.help-options-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 30px;
+  align-items: start;
+}
+.help-contact-title {
+  font-size: 30px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: #111;
+  text-align: center;
+}
+/* Responsive fix for mobile and tablet */
+@media (max-width: 768px) {
+  .sync-button-container {
+    position: static;
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+    margin-bottom: 20px;
+  }
 }
 
 .stat-icon {
@@ -462,5 +414,83 @@ body {
   
   .analytics-legend {
     grid-template-columns: 1fr;
+  }
+}
+/* Responsive Design Enhancements */
+
+/* Tablet and below */
+@media (max-width: 768px) {
+  .dashboard-container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .content-grid-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .analytics-legend {
+    grid-template-columns: 1fr;
+  }
+
+  .main-content {
+    padding: 16px;
+  }
+
+  .stat-card {
+    padding: 16px;
+  }
+
+  .content-card {
+    padding: 16px;
+  }
+}
+
+/* Mobile (very small devices) */
+@media (max-width: 480px) {
+  .header-left h1 {
+    font-size: 24px;
+  }
+
+  .header-left p {
+    font-size: 14px;
+  }
+
+  .stat-number {
+    font-size: 22px;
+  }
+
+  .chart-percentage {
+    font-size: 20px;
+  }
+
+  .health-percentage {
+    font-size: 18px;
+  }
+
+  .activities-table th,
+  .activities-table td {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .legend-item {
+    font-size: 11px;
   }
 }

@@ -18,13 +18,6 @@
   font-weight: bold;
 }
 
-.main-title {
-  font-size: 1.75rem;
-  font-weight: 600;
-  color: #2563eb;
-  margin-bottom: 2rem;
-  text-align: left;
-}
 
 /* Step Indicators */
 .step-indicators {

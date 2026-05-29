@@ -1,9 +1,9 @@
-import React from 'react';
+import React from "react";
 import './WhatWeDo.css';
-import DataIntegrationImg from 'D:/tally-to-books/src/assets/DataIntegrationImg.png'
-import MinimalDowntimeImg from 'D:/tally-to-books/src/assets/MinimalDowntimeImg.png';
-import CustomConfigImg from 'D:/tally-to-books/src/assets/CustomConfigImg.png';
-import Support from "D:/tally-to-books/src/assets/support.png"
+import DataIntegrationImg from '../../../assets/DataIntegrationImg.png';
+import MinimalDowntimeImg from '../../../assets/MinimalDowntimeImg.png';
+import CustomConfigImg from '../../../assets/CustomConfigImg.png';
+import Support from '../../../assets/support.png';
 const WhatWeDo = () => {
  const cards = [
   {
@@ -35,14 +35,14 @@ const WhatWeDo = () => {
     <div className="what-cards">
       
        {cards.map((card, index) => (
-        <div className="card" >
-        <div className="card-overley" key={index}>
-            <h3 className='card-title-wwd'>{card.title}</h3>
-          <p className='card-description'>{card.text}</p>
-          <img src={card.image} alt={card.title} className="card-image" />
-        </div>
-        </div>
-      ))}
+  <div className="card" key={index}>
+    <div className="card-overley">
+      <h3 className='card-title-wwd'>{card.title}</h3>
+      <p className='card-description'>{card.text}</p>
+      <img src={card.image} alt={card.title} className="card-image" />
+    </div>
+  </div>
+))}
     </div>
     </section>
   );

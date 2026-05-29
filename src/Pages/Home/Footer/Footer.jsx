@@ -15,7 +15,7 @@ const Footer = () => {
       <div className="footer-container">
         {/* Company Info Section */}
         <div className="footer-section company-info">
-          <h2 className="company-name">Sync Sonic</h2>
+          <h2 className="company-name">Tally2books</h2>
           <div className="contact-info">
             <div className="contact-item">
               <svg className="icon location-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -61,12 +61,21 @@ const Footer = () => {
 
         {/* Newsletter Section */}
         <div className="footer-section newsletter">
-          <h3 className="section-title">Subscribe our newsletter</h3>
-                <div className="hero-input">
-        <input type="email" placeholder="Your email address" />
-        <button>Subscribe</button>
-      </div>
-        </div>
+  <h3 className="section-title">Subscribe our newsletter</h3>
+
+  <div className="hero-input">
+    <input
+      type="email"
+      placeholder="Your email address"
+      value={email}
+      onChange={(e) => setEmail(e.target.value)}
+    />
+
+    <button onClick={handleSubscribe}>
+      Subscribe
+    </button>
+  </div>
+</div>
       </div>
 
       {/* Copyright */}
