@@ -166,7 +166,7 @@ const SyncDataFlow = () => {
         console.log('Form data:', formData);
 
         const response = await axios.post(
-          'http://127.0.0.1:5000/T2B/api/connect-zoho',
+          'http://127.0.0.1:8000/api/connect-zoho/',
           formData,
           {
             headers: {

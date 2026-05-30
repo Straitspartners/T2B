@@ -1,0 +1,10 @@
+{
+    "tally_url": "http://localhost:9000",
+    "auth_url": "http://localhost:8000/api/generate_token_agent/",
+    "django_api_url": "http://localhost:8000/api/users/ledgers/",
+    "django_url_vendors": "http://localhost:8000/api/users/vendors/",
+    "django_url_accounts": "http://localhost:8000/api/users/accounts/",
+    "django_url_items": "http://localhost:8000/api/users/items/",
+    "django_url_invoices": "http://localhost:8000/api/users/invoices/",
+    "django_url_receipts": "http://localhost:8000/api/users/receipts/"
+}

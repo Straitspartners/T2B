@@ -5,7 +5,7 @@ import "./Auth.css";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
-const BACKEND_URL = "http://127.0.0.1:8000";  // ✅ Changed to Django port
+const BACKEND_URL = "http://127.0.0.1:8000"; // ✅ Changed to Django port
 
 const AuthPage = ({ initialMode = "signin" }) => {
   const [isSignIn, setIsSignIn] = useState(initialMode !== "signup");
@@ -62,17 +62,18 @@ const AuthPage = ({ initialMode = "signin" }) => {
       );
 
       const token = response.data?.token;
-      const user = response.data?.user;
+      const name = response.data?.name;
+      const email = response.data?.email;
 
       if (token) {
         localStorage.setItem("authToken", token);
-        console.log("✅ Signin token saved!");
       }
-      if (user) {
-        localStorage.setItem("userData", JSON.stringify(user));
+      if (name) {
+        localStorage.setItem("userName", name);
+        localStorage.setItem("userEmail", email);
       }
 
-      navigate("/setup");
+      navigate("/dashboard");
 
     } catch (error) {
       console.error("Sign-in error:", error);
@@ -99,7 +100,7 @@ const AuthPage = ({ initialMode = "signin" }) => {
 
     try {
       const response = await axios.post(
-        `${BACKEND_URL}/api/register/`,  // ✅ Updated URL
+        `${BACKEND_URL}/api/register/`, // ✅ Updated URL
         {
           name: signUpForm.name,
           email: signUpForm.email,

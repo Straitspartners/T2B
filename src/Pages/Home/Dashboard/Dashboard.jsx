@@ -9,8 +9,10 @@ const Dashboard = () => {
 
   // User data state
   const [userData, setUserData] = useState({
-    name: 'John Andrew', // Default fallback
-    loading: true
+    name: localStorage.getItem("userName") ||
+      JSON.parse(localStorage.getItem("userData") || '{}')?.name ||
+      "User",
+    loading: false
   });
 
   // Dashboard data states
@@ -40,7 +42,7 @@ const Dashboard = () => {
   // Function to fetch user data
   const fetchUserData = async () => {
     try {
-      const authToken = sessionStorage.getItem('authToken');
+      const authToken = localStorage.getItem('authToken');
       if (!authToken) return;
 
       const response = await fetch('https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/me/', {
@@ -54,8 +56,8 @@ const Dashboard = () => {
       if (response.ok) {
         const data = await response.json();
         setUserData({
-          name: data.first_name && data.last_name 
-            ? `${data.first_name} ${data.last_name}` 
+          name: data.first_name && data.last_name
+            ? `${data.first_name} ${data.last_name}`
             : data.username || data.email || 'User',
           loading: false
         });
@@ -71,26 +73,23 @@ const Dashboard = () => {
   // Fetch dashboard data on component mount and set up interval
   useEffect(() => {
     console.log("Dashboard component mounted, starting data fetch...");
-    
+
     // Check for authentication token first
-    const authToken = sessionStorage.getItem('authToken');
+    const authToken = localStorage.getItem('authToken');
     if (!authToken) {
       console.log("No auth token found, redirecting to login...");
 
       return;
     }
-    
-    // Fetch user data
-    fetchUserData();
-    
+
     // Initial fetch when component mounts
     fetchDashboardData();
-    
+
     // Set up interval to fetch data every 30 seconds
     const intervalId = setInterval(() => {
       console.log("Dashboard interval triggered, fetching data...");
       // Check auth token before each fetch
-      const currentToken = sessionStorage.getItem('authToken');
+      const currentToken = localStorage.getItem('authToken');
       if (!currentToken) {
         console.log("Auth token missing during interval, redirecting to login...");
         clearInterval(intervalId);
@@ -105,17 +104,17 @@ const Dashboard = () => {
       console.log("Dashboard component unmounting, clearing interval...");
       clearInterval(intervalId);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]); // Add navigate to dependency array
 
   // Simplified function to fetch dashboard data from the correct endpoint
   const fetchDashboardData = async () => {
     try {
       console.log("Starting fetchDashboardData...");
-      
-      const authToken = sessionStorage.getItem('authToken');
+
+      const authToken = localStorage.getItem('authToken');
       console.log("Auth token:", authToken ? "Present" : "Missing");
-      
+
       if (!authToken) {
         console.log("No auth token found, redirecting to login...");
         navigate('/signin');
@@ -123,15 +122,15 @@ const Dashboard = () => {
       }
 
       // Use the correct endpoint that matches your API structure
-      const endpoint = 'https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/data-migration-status/';
-      
+      const endpoint = 'http://127.0.0.1:8000/api/data-migration-status/';
+
       console.log(`Fetching from endpoint: ${endpoint}`);
-      
+
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`
+          'Authorization': `Bearer ${authToken}`  // ✅ Bearer not Token
         }
       });
 
@@ -140,7 +139,7 @@ const Dashboard = () => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("Dashboard response error:", errorText);
-        
+
         // Handle authentication errors specifically
         if (response.status === 401 || response.status === 403) {
           console.log("Authentication failed, clearing token and redirecting to login...");
@@ -148,7 +147,7 @@ const Dashboard = () => {
           navigate('/signin');
           throw new Error('Session expired. Please login again.');
         }
-        
+
         throw new Error(`Failed to fetch dashboard data: ${response.status} - ${errorText}`);
       }
 
@@ -182,12 +181,12 @@ const Dashboard = () => {
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      
+
       // Handle authentication errors
       if (error.message.includes('Session expired') || error.message.includes('Authentication')) {
         return; // Don't show error alert, already redirecting
       }
-      
+
       // Show error alert
       showSnackbarAlert('error', `Failed to load dashboard data: ${error.message}`);
 
@@ -219,7 +218,7 @@ const Dashboard = () => {
   // Calculate analytics data - Masters for bar chart, Transactions for donut chart
   const calculateMastersData = () => {
     const totalMasters = dashboardData.customers + dashboardData.vendors + dashboardData.COA + dashboardData.items;
-    
+
     if (totalMasters === 0) return [];
 
     return [
@@ -232,7 +231,7 @@ const Dashboard = () => {
 
   const calculateTransactionsData = () => {
     const totalTransactions = dashboardData.invoices + dashboardData.receipts;
-    
+
     if (totalTransactions === 0) return [];
 
     return [
@@ -299,7 +298,7 @@ const Dashboard = () => {
           animation: blink 1s infinite;
         }
       `}</style>
-      
+
       <div className="dashboard-container">
         {/* Sidebar */}
         <Sidebar />
@@ -316,7 +315,7 @@ const Dashboard = () => {
               <Bell className="notification-icon" />
               <div className="user-profile">
                 <User className="user-icon" />
-                <span>{userData.loading ? 'Loading...' : userData.name}</span>
+                <span>{JSON.parse(localStorage.getItem("userData") || '{}')?.name || localStorage.getItem("userName") || "User"}</span>
               </div>
             </div>
           </div>
@@ -360,9 +359,9 @@ const Dashboard = () => {
             <div className={`snackbar-alert ${snackbarAlert.type}`}>
               <div className="snackbar-content">
                 <div className="snackbar-icon">
-                  {snackbarAlert.type === 'error' ? '' : 
-                   snackbarAlert.type === 'success' ? '' : 
-                   snackbarAlert.type === 'warning' ? '' : 'ℹ'}
+                  {snackbarAlert.type === 'error' ? '' :
+                    snackbarAlert.type === 'success' ? '' :
+                      snackbarAlert.type === 'warning' ? '' : 'ℹ'}
                 </div>
                 <div className="snackbar-message">
                   {snackbarAlert.message.split('\n').map((line, index) => (
@@ -390,7 +389,7 @@ const Dashboard = () => {
               </div>
               <div className="stat-chart">
                 <svg width="100" height="40" viewBox="0 0 100 40">
-                  <path d="M5,35 Q25,20 45,25 T85,15" stroke="#4F46E5" strokeWidth="2" fill="none"/>
+                  <path d="M5,35 Q25,20 45,25 T85,15" stroke="#4F46E5" strokeWidth="2" fill="none" />
                 </svg>
               </div>
             </div>
@@ -409,7 +408,7 @@ const Dashboard = () => {
               </div>
               <div className="stat-chart">
                 <svg width="100" height="40" viewBox="0 0 100 40">
-                  <path d="M5,35 Q25,30 45,20 T85,15" stroke="#F59E0B" strokeWidth="2" fill="none"/>
+                  <path d="M5,35 Q25,30 45,20 T85,15" stroke="#F59E0B" strokeWidth="2" fill="none" />
                 </svg>
               </div>
             </div>
@@ -428,7 +427,7 @@ const Dashboard = () => {
               </div>
               <div className="stat-chart">
                 <svg width="100" height="40" viewBox="0 0 100 40">
-                  <path d="M5,35 Q25,25 45,30 T85,20" stroke="#EAB308" strokeWidth="2" fill="none"/>
+                  <path d="M5,35 Q25,25 45,30 T85,20" stroke="#EAB308" strokeWidth="2" fill="none" />
                 </svg>
               </div>
             </div>
@@ -451,9 +450,9 @@ const Dashboard = () => {
                       {mastersData.map((item, index) => (
                         <div key={item.name} className="bar-item">
                           <div className="bar-container">
-                            <div 
+                            <div
                               className={`bar ${item.name.toLowerCase().replace(/\s+/g, '-')}-bar`}
-                              style={{ 
+                              style={{
                                 height: `${Math.max((item.value / Math.max(totalMasters, 1)) * 100, 5)}%`,
                                 backgroundColor: item.color
                               }}
@@ -468,7 +467,7 @@ const Dashboard = () => {
                         </div>
                       ))}
                     </div>
-                    
+
                     {/* Masters Summary */}
                     <div className="chart-summary" style={{ marginTop: '20px', padding: '12px', background: '#f8f9fa', borderRadius: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -492,81 +491,81 @@ const Dashboard = () => {
                       <p>Loading transactions...</p>
                     </div>
                   ) : totalTransactions === 0 ? (
-                 <div className="donut-chart">
-  {dashboardData.loading ? (
-    <div className="loading-state">
-      <div className="loading-spinner">⟳</div>
-      <p>Loading transactions...</p>
-    </div>
-  ) : (
-    <>
-      <svg width="160" height="160" viewBox="0 0 160 160">
-        {/* Always show base gray ring */}
-        <circle 
-          cx="80" 
-          cy="80" 
-          r="60" 
-          fill="none" 
-          stroke="#D1D5DB" 
-          strokeWidth="20" 
-        />
+                    <div className="donut-chart">
+                      {dashboardData.loading ? (
+                        <div className="loading-state">
+                          <div className="loading-spinner">⟳</div>
+                          <p>Loading transactions...</p>
+                        </div>
+                      ) : (
+                        <>
+                          <svg width="160" height="160" viewBox="0 0 160 160">
+                            {/* Always show base gray ring */}
+                            <circle
+                              cx="80"
+                              cy="80"
+                              r="60"
+                              fill="none"
+                              stroke="#D1D5DB"
+                              strokeWidth="20"
+                            />
 
-        {/* Show colored segments only if data exists */}
-        {totalTransactions > 0 && transactionsData.map((item, index) => {
-          const totalValue = transactionsData.reduce((sum, d) => sum + d.value, 0);
-          const percentage = (item.value / totalValue) * 100;
-          const circumference = 2 * Math.PI * 60;
-          const strokeDasharray = circumference;
-          const strokeDashoffset = circumference - (circumference * percentage) / 100;
-          const rotation = transactionsData.slice(0, index).reduce((sum, d) => {
-            const prevPercentage = (d.value / totalValue) * 100;
-            return sum + (prevPercentage * 3.6);
-          }, -90);
+                            {/* Show colored segments only if data exists */}
+                            {totalTransactions > 0 && transactionsData.map((item, index) => {
+                              const totalValue = transactionsData.reduce((sum, d) => sum + d.value, 0);
+                              const percentage = (item.value / totalValue) * 100;
+                              const circumference = 2 * Math.PI * 60;
+                              const strokeDasharray = circumference;
+                              const strokeDashoffset = circumference - (circumference * percentage) / 100;
+                              const rotation = transactionsData.slice(0, index).reduce((sum, d) => {
+                                const prevPercentage = (d.value / totalValue) * 100;
+                                return sum + (prevPercentage * 3.6);
+                              }, -90);
 
-          return (
-            <circle
-              key={item.name}
-              cx="80"
-              cy="80"
-              r="60"
-              fill="none"
-              stroke={item.color}
-              strokeWidth="20"
-              strokeDasharray={strokeDasharray}
-              strokeDashoffset={strokeDashoffset}
-              transform={`rotate(${rotation} 80 80)`}
-              style={{ transition: 'all 0.3s ease' }}
-            />
-          );
-        })}
-      </svg>
+                              return (
+                                <circle
+                                  key={item.name}
+                                  cx="80"
+                                  cy="80"
+                                  r="60"
+                                  fill="none"
+                                  stroke={item.color}
+                                  strokeWidth="20"
+                                  strokeDasharray={strokeDasharray}
+                                  strokeDashoffset={strokeDashoffset}
+                                  transform={`rotate(${rotation} 80 80)`}
+                                  style={{ transition: 'all 0.3s ease' }}
+                                />
+                              );
+                            })}
+                          </svg>
 
-      {/* Center Label */}
-      <div className="chart-center">
-        {totalTransactions > 0 ? (
-          <>
-            <div className="chart-percentage" style={{ fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
-              {totalTransactions}
-            </div>
-            <div className="chart-label" style={{ fontSize: '12px', color: '#6b7280' }}>Total</div>
-          </>
-        ) : (
-          <>
-            <div className="chart-percentage" style={{ fontSize: '14px', fontWeight: '500', color: '#6b7280', fontStyle: 'italic' }}>
-              No data
-            </div>
-            <div className="chart-label" style={{ fontSize: '12px', color: '#9CA3AF' }}>Transactions</div>
-          </>
-        )}
-      </div>
-    </>
-  )}
-</div>
+                          {/* Center Label */}
+                          <div className="chart-center">
+                            {totalTransactions > 0 ? (
+                              <>
+                                <div className="chart-percentage" style={{ fontSize: '24px', fontWeight: '700', color: '#1f2937' }}>
+                                  {totalTransactions}
+                                </div>
+                                <div className="chart-label" style={{ fontSize: '12px', color: '#6b7280' }}>Total</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="chart-percentage" style={{ fontSize: '14px', fontWeight: '500', color: '#6b7280', fontStyle: 'italic' }}>
+                                  No data
+                                </div>
+                                <div className="chart-label" style={{ fontSize: '12px', color: '#9CA3AF' }}>Transactions</div>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
 
                   ) : (
                     <>
                       <svg width="160" height="160" viewBox="0 0 160 160">
-                        <circle cx="80" cy="80" r="60" fill="none" stroke="#E5E7EB" strokeWidth="20"/>
+                        <circle cx="80" cy="80" r="60" fill="none" stroke="#E5E7EB" strokeWidth="20" />
                         {transactionsData.map((item, index) => {
                           const totalValue = transactionsData.reduce((sum, d) => sum + d.value, 0);
                           const percentage = totalValue > 0 ? (item.value / totalValue) * 100 : 0;
@@ -577,16 +576,16 @@ const Dashboard = () => {
                             const prevPercentage = totalValue > 0 ? (d.value / totalValue) * 100 : 0;
                             return sum + (prevPercentage * 3.6);
                           }, -90);
-                          
+
                           return (
-                            <circle 
+                            <circle
                               key={item.name}
-                              cx="80" 
-                              cy="80" 
-                              r="60" 
-                              fill="none" 
-                              stroke={item.color} 
-                              strokeWidth="20" 
+                              cx="80"
+                              cy="80"
+                              r="60"
+                              fill="none"
+                              stroke={item.color}
+                              strokeWidth="20"
                               strokeDasharray={strokeDasharray}
                               strokeDashoffset={strokeDashoffset}
                               transform={`rotate(${rotation} 80 80)`}
@@ -605,7 +604,7 @@ const Dashboard = () => {
                   )}
                 </div>
               </div>
-              
+
               <div className="analytics-legend">
                 {transactionsData.map((item) => (
                   <div key={item.name} className="legend-item">
@@ -621,7 +620,7 @@ const Dashboard = () => {
                 )}
               </div>
 
-        
+
             </div>
           </div>
         </div>

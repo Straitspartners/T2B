@@ -8,6 +8,8 @@ import "./QuickMigration.css";
 import Sidebar from "../../../components/Sidebar";
 
 function QuickMigration() {
+  const userName = JSON.parse(localStorage.getItem("userData") || '{}')?.name ||
+    localStorage.getItem("userName") || "User";
   // Progress states
   const [isSync, setIsSync] = useState(false);
   const [, setProgress] = useState(0);
@@ -55,7 +57,7 @@ function QuickMigration() {
   const calculateProgress = () => {
     const totalRecords = getTotalRecords();
     const totalSynced = getTotalSyncedRecords();
-    
+
     if (totalRecords === 0) return 0;
     return Math.round((totalSynced / totalRecords) * 100);
   };
@@ -63,10 +65,10 @@ function QuickMigration() {
   // Fetch Tally data on component mount and set up interval
   useEffect(() => {
     console.log("Component mounted, starting data fetch...");
-    
+
     // Initial fetch when component mounts
     fetchTallyData();
-    
+
     // Set up interval to fetch data every 10 seconds
     const intervalId = setInterval(() => {
       console.log("Interval triggered, fetching data...");
@@ -78,26 +80,26 @@ function QuickMigration() {
       console.log("Component unmounting, clearing interval...");
       clearInterval(intervalId);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array means this runs once on mount
 
   // Function to fetch Tally data from backend
   const fetchTallyData = async () => {
     try {
       console.log("Starting fetchTallyData...");
-      
-      const authToken = sessionStorage.getItem('authToken');
+
+      const authToken = localStorage.getItem('authToken');
       console.log("Auth token:", authToken ? "Present" : "Missing");
-      
+
       if (!authToken) {
         throw new Error('Authentication token not found. Please login again.');
       }
 
-      const response = await fetch('https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/total-records/', {
+      const response = await fetch('http://127.0.0.1:8000/api/total-records/', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`
+          'Authorization': `Bearer ${authToken}`
         }
       });
 
@@ -141,7 +143,7 @@ function QuickMigration() {
 
     } catch (error) {
       console.error('Error fetching tally data:', error);
-      
+
       // Show error alert with more detailed message
       showSnackbarAlert('error', `Failed to load Tally data: ${error.message}`);
 
@@ -167,9 +169,9 @@ function QuickMigration() {
       hideSnackbarAlert(); // Clear any previous alerts
 
       // Start the sync process with the correct API URL
-      const authToken = sessionStorage.getItem('authToken');
+      const authToken = localStorage.getItem('authToken');
 
-      const syncResponse = await fetch('https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/push-to-zoho/', {
+      const syncResponse = await fetch('http://127.0.0.1:8000/api/push-to-zoho/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -187,7 +189,7 @@ function QuickMigration() {
       }
 
       const syncResult = await syncResponse.json();
-      
+
       // Calculate total records to sync
       const totalMasters = tallyData.masters.total;
       const totalTransactions = tallyData.transactions.total;
@@ -210,12 +212,12 @@ function QuickMigration() {
 
             if (progressResponse.ok) {
               const progressData = await progressResponse.json();
-              
+
               // Assume the API returns separate counts for masters and transactions
               const mastersSynced = progressData.mastersSynced || 0;
               const transactionsSynced = progressData.transactionsSynced || 0;
               const totalSynced = mastersSynced + transactionsSynced;
-              
+
               // Update synced records
               setSyncedRecords({
                 masters: mastersSynced,
@@ -234,7 +236,7 @@ function QuickMigration() {
                 setIsSync(false);
                 setSyncStatus("Sync completed successfully!");
                 showSnackbarAlert('success', `Data synced successfully to Zoho Books! Total: ${totalSynced.toLocaleString()} records`);
-                
+
                 // Refresh Tally data to show updated numbers
                 fetchTallyData();
               }
@@ -266,33 +268,33 @@ function QuickMigration() {
         // If no sync ID provided, simulate progress with realistic progression
         let currentMastersSynced = 0;
         let currentTransactionsSynced = 0;
-        
+
         const progressInterval = setInterval(() => {
           // Simulate realistic sync progression (masters usually sync faster than transactions)
           const mastersIncrement = Math.ceil(totalMasters / 50); // Masters sync in 50 steps
           const transactionsIncrement = Math.ceil(totalTransactions / 100); // Transactions sync in 100 steps
-          
+
           if (currentMastersSynced < totalMasters) {
             currentMastersSynced = Math.min(currentMastersSynced + mastersIncrement, totalMasters);
           }
-          
+
           if (currentTransactionsSynced < totalTransactions) {
             currentTransactionsSynced = Math.min(currentTransactionsSynced + transactionsIncrement, totalTransactions);
           }
-          
+
           const totalSynced = currentMastersSynced + currentTransactionsSynced;
-          
+
           setSyncedRecords({
             masters: currentMastersSynced,
             transactions: currentTransactionsSynced,
             total: totalSynced
           });
-          
+
           const currentProgress = Math.min(Math.round((totalSynced / totalRecordsToSync) * 100), 100);
           setProgress(currentProgress);
-          
+
           setSyncStatus(`Syncing: ${totalSynced.toLocaleString()} of ${totalRecordsToSync.toLocaleString()} records (Masters: ${currentMastersSynced.toLocaleString()}/${totalMasters.toLocaleString()}, Transactions: ${currentTransactionsSynced.toLocaleString()}/${totalTransactions.toLocaleString()})`);
-          
+
           if (currentProgress >= 100) {
             clearInterval(progressInterval);
             setIsSync(false);
@@ -358,7 +360,7 @@ function QuickMigration() {
               <Bell className="notification-icon" />
               <div className="user-profile">
                 <User className="user-icon" />
-                <span>John Andrew</span>
+                <span>{userName}</span>
               </div>
             </div>
           </div>
@@ -368,9 +370,9 @@ function QuickMigration() {
             <div className={`snackbar-alert ${snackbarAlert.type}`}>
               <div className="snackbar-content">
                 <div className="snackbar-icon">
-                  {snackbarAlert.type === 'error' ? '❌' : 
-                   snackbarAlert.type === 'success' ? '✅' : 
-                   snackbarAlert.type === 'warning' ? '⚠️' : 'ℹ️'}
+                  {snackbarAlert.type === 'error' ? '❌' :
+                    snackbarAlert.type === 'success' ? '✅' :
+                      snackbarAlert.type === 'warning' ? '⚠️' : 'ℹ️'}
                 </div>
                 <div className="snackbar-message">
                   {snackbarAlert.message.split('\n').map((line, index) => (
@@ -384,15 +386,15 @@ function QuickMigration() {
 
           {/* Debug Info - Remove this in production */}
           <div style={{ background: '#f0f0f0', padding: '10px', margin: '10px 0', fontSize: '12px' }}>
-            <strong>Debug Info:</strong><br/>
-            Masters Total: {tallyData.masters.total} (Loading: {tallyData.masters.loading.toString()})<br/>
-            Transactions Total: {tallyData.transactions.total} (Loading: {tallyData.transactions.loading.toString()})<br/>
-            Combined Total: {getTotalRecords()}<br/>
-            Synced Masters: {syncedRecords.masters}<br/>
-            Synced Transactions: {syncedRecords.transactions}<br/>
-            Total Synced: {getTotalSyncedRecords()}<br/>
-            Progress: {calculateProgress()}%<br/>
-            Auth Token: {sessionStorage.getItem('authToken') ? 'Present' : 'Missing'}
+            <strong>Debug Info:</strong><br />
+            Masters Total: {tallyData.masters.total} (Loading: {tallyData.masters.loading.toString()})<br />
+            Transactions Total: {tallyData.transactions.total} (Loading: {tallyData.transactions.loading.toString()})<br />
+            Combined Total: {getTotalRecords()}<br />
+            Synced Masters: {syncedRecords.masters}<br />
+            Synced Transactions: {syncedRecords.transactions}<br />
+            Total Synced: {getTotalSyncedRecords()}<br />
+            Progress: {calculateProgress()}%<br />
+            Auth Token: {localStorage.getItem('authToken') ? 'Present' : 'Missing'}
           </div>
 
           {/* Stats Cards with Real Tally Data */}
@@ -469,7 +471,7 @@ function QuickMigration() {
                 </h3>
               </div>
               <div className="sync-button-container">
-                <button 
+                <button
                   className={`sync-button ${isSync ? 'syncing' : ''}`}
                   onClick={handleSyncNow}
                   disabled={isSync || tallyData.masters.loading || tallyData.transactions.loading}
@@ -484,26 +486,26 @@ function QuickMigration() {
           <div className="current-status-section">
             <div className="status-card-progress">
               <h2 className="status-title">Current Status</h2>
-              
+
               <div className="status-info-progress">
                 <p className="status-description">
                   Combined Records - {getTotalSyncedRecords().toLocaleString()} of {getTotalRecords().toLocaleString()} synced
-                  <br/>
+                  <br />
                   <small style={{ color: '#666', fontSize: '12px' }}>
-                    Masters: {syncedRecords.masters.toLocaleString()}/{tallyData.masters.total.toLocaleString()} | 
+                    Masters: {syncedRecords.masters.toLocaleString()}/{tallyData.masters.total.toLocaleString()} |
                     Transactions: {syncedRecords.transactions.toLocaleString()}/{tallyData.transactions.total.toLocaleString()}
                   </small>
                 </p>
-                
+
                 <div className="progress-container">
                   <div className="progress-bar-bg">
-                    <div 
-                      className="progress-bar-fill" 
+                    <div
+                      className="progress-bar-fill"
                       style={{ width: `${calculateProgress()}%` }}
                     ></div>
                   </div>
                 </div>
-                
+
                 <div className="progress-percentage-container">
                   <span className="progress-percentage-text">
                     {calculateProgress()}% completed
