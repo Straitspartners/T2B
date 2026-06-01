@@ -166,7 +166,7 @@ function ChartofAccounts() {
               <Bell className="notification-icon" />
               <div className="user-profile">
                 <User className="user-icon" />
-                <span>John Andrew</span>
+                <span>{JSON.parse(localStorage.getItem("userData") || '{}')?.name || localStorage.getItem("userName") || "User"}</span>
               </div>
             </div>
           </div>

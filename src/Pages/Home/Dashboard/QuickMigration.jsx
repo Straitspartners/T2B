@@ -1,359 +1,192 @@
 import React, { useState, useEffect } from "react";
-import {
-  Bell,
-  User,
-} from "lucide-react";
+import { Bell, User } from "lucide-react";
 import "./Dashboard.css";
 import "./QuickMigration.css";
 import Sidebar from "../../../components/Sidebar";
 
 function QuickMigration() {
-  const userName = JSON.parse(localStorage.getItem("userData") || '{}')?.name ||
-    localStorage.getItem("userName") || "User";
-  // Progress states
+  const userName =
+    JSON.parse(localStorage.getItem("userData") || "{}")?.name ||
+    localStorage.getItem("userName") ||
+    "User";
+
   const [isSync, setIsSync] = useState(false);
-  const [, setProgress] = useState(0);
+  const [progress, setProgress] = useState(0);
   const [syncedRecords, setSyncedRecords] = useState({
     masters: 0,
     transactions: 0,
-    total: 0
+    total: 0,
   });
   const [syncStatus, setSyncStatus] = useState("Ready to sync");
 
-  // Tally data states
   const [tallyData, setTallyData] = useState({
-    masters: {
-      migrated: 0,
-      pending: 0,
-      total: 0,
-      loading: true
-    },
-    transactions: {
-      migrated: 0,
-      pending: 0,
-      total: 0,
-      loading: true
-    }
+    masters: { migrated: 0, pending: 0, total: 0, loading: true },
+    transactions: { migrated: 0, pending: 0, total: 0, loading: true },
   });
 
-  // Snackbar alert states
   const [snackbarAlert, setSnackbarAlert] = useState({
     show: false,
-    type: '',
-    message: ''
+    type: "",
+    message: "",
   });
 
-  // Calculate total records across masters and transactions
-  const getTotalRecords = () => {
-    return tallyData.masters.total + tallyData.transactions.total;
-  };
+  const getTotalRecords = () =>
+    tallyData.masters.total + tallyData.transactions.total;
 
-  // Calculate total synced records
-  const getTotalSyncedRecords = () => {
-    return syncedRecords.masters + syncedRecords.transactions;
-  };
+  const getTotalSyncedRecords = () =>
+    syncedRecords.masters + syncedRecords.transactions;
 
-  // Calculate progress percentage based on combined data
   const calculateProgress = () => {
     const totalRecords = getTotalRecords();
     const totalSynced = getTotalSyncedRecords();
-
     if (totalRecords === 0) return 0;
     return Math.round((totalSynced / totalRecords) * 100);
   };
 
-  // Fetch Tally data on component mount and set up interval
-  useEffect(() => {
-    console.log("Component mounted, starting data fetch...");
+  const showSnackbarAlert = (type, message) => {
+    setSnackbarAlert({ show: true, type, message });
+  };
 
-    // Initial fetch when component mounts
-    fetchTallyData();
+  const hideSnackbarAlert = () => {
+    setSnackbarAlert({ show: false, type: "", message: "" });
+  };
 
-    // Set up interval to fetch data every 10 seconds
-    const intervalId = setInterval(() => {
-      console.log("Interval triggered, fetching data...");
-      fetchTallyData();
-    }, 10000); // 10 seconds = 10000 milliseconds
+  // -------------------- FETCH TALLY DATA --------------------
 
-    // Cleanup interval on component unmount
-    return () => {
-      console.log("Component unmounting, clearing interval...");
-      clearInterval(intervalId);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array means this runs once on mount
-
-  // Function to fetch Tally data from backend
   const fetchTallyData = async () => {
     try {
-      console.log("Starting fetchTallyData...");
-
-      const authToken = localStorage.getItem('authToken');
-      console.log("Auth token:", authToken ? "Present" : "Missing");
-
+      const authToken = localStorage.getItem("authToken");
       if (!authToken) {
-        throw new Error('Authentication token not found. Please login again.');
+        throw new Error("Authentication token not found. Please login again.");
       }
 
-      const response = await fetch('http://127.0.0.1:8000/api/total-records/', {
-        method: 'GET',
+      const response = await fetch("http://127.0.0.1:8000/api/total-records/", {
+        method: "GET",
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        }
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
       });
-
-      console.log("Response status:", response.status);
-      console.log("Response ok:", response.ok);
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Response error:", errorText);
         throw new Error(`Failed to fetch total records: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      console.log("Raw API response:", data);
 
-      // Log the structure to understand what we're getting
-      console.log("Masters data:", data.masters);
-      console.log("Transactions data:", data.transactions);
-
-      // Handle the actual API response structure
-      const newTallyData = {
+      setTallyData({
         masters: {
           migrated: data.migrated || 0,
           pending: data.pending || 0,
           total: data.total || data.vendors || data.accounts || data.ledgers || 0,
-          loading: false
+          loading: false,
         },
         transactions: {
           migrated: data.transactions_migrated || 0,
           pending: data.transactions_pending || 0,
           total: data.total_trans || 0,
-          loading: false
-        }
-      };
+          loading: false,
+        },
+      });
 
-      console.log("Processed tally data:", newTallyData);
-      setTallyData(newTallyData);
-
-      // Clear any previous error alerts on successful fetch
       hideSnackbarAlert();
-
     } catch (error) {
-      console.error('Error fetching tally data:', error);
-
-      // Show error alert with more detailed message
-      showSnackbarAlert('error', `Failed to load Tally data: ${error.message}`);
-
-      // Set loading to false even on error but keep previous data
-      setTallyData(prev => ({
+      console.error("Error fetching tally data:", error);
+      showSnackbarAlert("error", `Failed to load Tally data: ${error.message}`);
+      setTallyData((prev) => ({
         masters: { ...prev.masters, loading: false },
-        transactions: { ...prev.transactions, loading: false }
+        transactions: { ...prev.transactions, loading: false },
       }));
     }
   };
 
-  // Function to sync Tally data to Zoho Books
+  useEffect(() => {
+    fetchTallyData();
+    const intervalId = setInterval(fetchTallyData, 30000);
+    return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -------------------- SYNC NOW --------------------
+
   const handleSyncNow = async () => {
     try {
       setIsSync(true);
       setProgress(0);
-      setSyncedRecords({
-        masters: 0,
-        transactions: 0,
-        total: 0
-      });
+      setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
       setSyncStatus("Preparing sync from Tally to Zoho Books...");
-      hideSnackbarAlert(); // Clear any previous alerts
+      hideSnackbarAlert();
 
-      // Start the sync process with the correct API URL
-      const authToken = localStorage.getItem('authToken');
+      const authToken = localStorage.getItem("authToken");
+      if (!authToken) {
+        throw new Error("Authentication token not found. Please login again.");
+      }
 
-      const syncResponse = await fetch('http://127.0.0.1:8000/api/push-to-zoho/', {
-        method: 'POST',
+      const syncResponse = await fetch("http://127.0.0.1:8000/api/push-to-zoho/", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({
           masters: tallyData.masters,
           transactions: tallyData.transactions,
-          syncType: 'full'
-        })
+          syncType: "full",
+        }),
       });
 
       if (!syncResponse.ok) {
-        throw new Error(`Failed to start sync process: ${syncResponse.status} ${syncResponse.statusText}`);
+        throw new Error(`Failed: ${syncResponse.status} ${syncResponse.statusText}`);
       }
 
       const syncResult = await syncResponse.json();
 
-      // Calculate total records to sync
-      const totalMasters = tallyData.masters.total;
-      const totalTransactions = tallyData.transactions.total;
-      const totalRecordsToSync = totalMasters + totalTransactions;
+      // Simulate progress steps
+      setSyncStatus("Syncing masters...");
+      setProgress(40);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      setSyncStatus(`Syncing ${totalRecordsToSync.toLocaleString()} records (${totalMasters.toLocaleString()} masters + ${totalTransactions.toLocaleString()} transactions) to Zoho Books...`);
+      setSyncStatus("Syncing transactions...");
+      setProgress(80);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // Check if the API provides a sync ID for progress tracking
-      if (syncResult.syncId) {
-        // Real progress tracking with sync ID
-        const progressInterval = setInterval(async () => {
-          try {
-            // Check sync progress from backend
-            const progressResponse = await fetch(`https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/sync/progress/${syncResult.syncId}`, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-              }
-            });
+      setProgress(100);
+      setSyncedRecords({
+        masters: tallyData.masters.total,
+        transactions: tallyData.transactions.total,
+        total: tallyData.masters.total + tallyData.transactions.total,
+      });
 
-            if (progressResponse.ok) {
-              const progressData = await progressResponse.json();
-
-              // Assume the API returns separate counts for masters and transactions
-              const mastersSynced = progressData.mastersSynced || 0;
-              const transactionsSynced = progressData.transactionsSynced || 0;
-              const totalSynced = mastersSynced + transactionsSynced;
-
-              // Update synced records
-              setSyncedRecords({
-                masters: mastersSynced,
-                transactions: transactionsSynced,
-                total: totalSynced
-              });
-
-              // Calculate progress percentage
-              const currentProgress = Math.min(Math.round((totalSynced / totalRecordsToSync) * 100), 100);
-              setProgress(currentProgress);
-
-              setSyncStatus(`Syncing: ${totalSynced.toLocaleString()} of ${totalRecordsToSync.toLocaleString()} records (Masters: ${mastersSynced.toLocaleString()}/${totalMasters.toLocaleString()}, Transactions: ${transactionsSynced.toLocaleString()}/${totalTransactions.toLocaleString()})`);
-
-              if (currentProgress >= 100) {
-                clearInterval(progressInterval);
-                setIsSync(false);
-                setSyncStatus("Sync completed successfully!");
-                showSnackbarAlert('success', `Data synced successfully to Zoho Books! Total: ${totalSynced.toLocaleString()} records`);
-
-                // Refresh Tally data to show updated numbers
-                fetchTallyData();
-              }
-            }
-          } catch (progressError) {
-            console.error('Error checking sync progress:', progressError);
-            // Continue with fallback progress simulation
-          }
-        }, 500); // Check progress every 500ms
-
-        // Fallback timeout in case progress tracking fails
-        setTimeout(() => {
-          if (isSync) {
-            clearInterval(progressInterval);
-            setProgress(100);
-            setSyncedRecords({
-              masters: totalMasters,
-              transactions: totalTransactions,
-              total: totalRecordsToSync
-            });
-            setIsSync(false);
-            setSyncStatus("Sync completed successfully!");
-            showSnackbarAlert('success', 'Data synced successfully to Zoho Books!');
-            fetchTallyData();
-          }
-        }, 30000); // 30 second timeout
-
-      } else {
-        // If no sync ID provided, simulate progress with realistic progression
-        let currentMastersSynced = 0;
-        let currentTransactionsSynced = 0;
-
-        const progressInterval = setInterval(() => {
-          // Simulate realistic sync progression (masters usually sync faster than transactions)
-          const mastersIncrement = Math.ceil(totalMasters / 50); // Masters sync in 50 steps
-          const transactionsIncrement = Math.ceil(totalTransactions / 100); // Transactions sync in 100 steps
-
-          if (currentMastersSynced < totalMasters) {
-            currentMastersSynced = Math.min(currentMastersSynced + mastersIncrement, totalMasters);
-          }
-
-          if (currentTransactionsSynced < totalTransactions) {
-            currentTransactionsSynced = Math.min(currentTransactionsSynced + transactionsIncrement, totalTransactions);
-          }
-
-          const totalSynced = currentMastersSynced + currentTransactionsSynced;
-
-          setSyncedRecords({
-            masters: currentMastersSynced,
-            transactions: currentTransactionsSynced,
-            total: totalSynced
-          });
-
-          const currentProgress = Math.min(Math.round((totalSynced / totalRecordsToSync) * 100), 100);
-          setProgress(currentProgress);
-
-          setSyncStatus(`Syncing: ${totalSynced.toLocaleString()} of ${totalRecordsToSync.toLocaleString()} records (Masters: ${currentMastersSynced.toLocaleString()}/${totalMasters.toLocaleString()}, Transactions: ${currentTransactionsSynced.toLocaleString()}/${totalTransactions.toLocaleString()})`);
-
-          if (currentProgress >= 100) {
-            clearInterval(progressInterval);
-            setIsSync(false);
-            setSyncStatus("Sync completed successfully!");
-            showSnackbarAlert('success', `Data synced successfully to Zoho Books! Total: ${totalSynced.toLocaleString()} records`);
-            fetchTallyData();
-          }
-        }, 200); // Update every 200ms for smoother progress
-      }
-
+      setSyncStatus(syncResult.message || "Sync completed successfully!");
+      showSnackbarAlert("success", syncResult.message || "Sync completed successfully!");
+      fetchTallyData();
     } catch (error) {
-      console.error('Error during sync:', error);
-      showSnackbarAlert('error', `Failed to sync data to Zoho Books:\n${error.message}`);
-      setIsSync(false);
+      console.error("Error during sync:", error);
+      showSnackbarAlert("error", `Failed to sync:\n${error.message}`);
       setSyncStatus("Sync failed. Please try again.");
       setProgress(0);
-      setSyncedRecords({
-        masters: 0,
-        transactions: 0,
-        total: 0
-      });
+      setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
+    } finally {
+      setIsSync(false);
     }
   };
 
-  // Function to show snackbar alert
-  const showSnackbarAlert = (type, message) => {
-    setSnackbarAlert({
-      show: true,
-      type: type,
-      message: message
-    });
-  };
-
-  // Function to hide snackbar alert
-  const hideSnackbarAlert = () => {
-    setSnackbarAlert({
-      show: false,
-      type: '',
-      message: ''
-    });
-  };
-
-  // Debug: Log current state
-  console.log("Current tallyData state:", tallyData);
+  // -------------------- RENDER --------------------
 
   return (
     <div className="dashboard-page">
       <div className="dashboard-container">
-        {/* Sidebar */}
         <Sidebar />
 
-        {/* Main Content */}
         <div className="main-content">
           {/* Header */}
           <div className="header">
             <div className="header-left">
               <h1>Quick Migration</h1>
               <p>
-                Meet the Unified Migration Hub: Your key resource for smooth master and transaction migrations.
+                Meet the Unified Migration Hub: Your key resource for smooth
+                master and transaction migrations.
               </p>
             </div>
             <div className="header-right">
@@ -370,41 +203,38 @@ function QuickMigration() {
             <div className={`snackbar-alert ${snackbarAlert.type}`}>
               <div className="snackbar-content">
                 <div className="snackbar-icon">
-                  {snackbarAlert.type === 'error' ? '❌' :
-                    snackbarAlert.type === 'success' ? '✅' :
-                      snackbarAlert.type === 'warning' ? '⚠️' : 'ℹ️'}
+                  {snackbarAlert.type === "error"
+                    ? "❌"
+                    : snackbarAlert.type === "success"
+                    ? "✅"
+                    : snackbarAlert.type === "warning"
+                    ? "⚠️"
+                    : "ℹ️"}
                 </div>
                 <div className="snackbar-message">
-                  {snackbarAlert.message.split('\n').map((line, index) => (
-                    <div key={index} className="snackbar-line">{line}</div>
+                  {snackbarAlert.message.split("\n").map((line, index) => (
+                    <div key={index} className="snackbar-line">
+                      {line}
+                    </div>
                   ))}
                 </div>
-                <button className="snackbar-close" onClick={hideSnackbarAlert}>×</button>
+                <button className="snackbar-close" onClick={hideSnackbarAlert}>
+                  ×
+                </button>
               </div>
             </div>
           )}
 
-          {/* Debug Info - Remove this in production */}
-          <div style={{ background: '#f0f0f0', padding: '10px', margin: '10px 0', fontSize: '12px' }}>
-            <strong>Debug Info:</strong><br />
-            Masters Total: {tallyData.masters.total} (Loading: {tallyData.masters.loading.toString()})<br />
-            Transactions Total: {tallyData.transactions.total} (Loading: {tallyData.transactions.loading.toString()})<br />
-            Combined Total: {getTotalRecords()}<br />
-            Synced Masters: {syncedRecords.masters}<br />
-            Synced Transactions: {syncedRecords.transactions}<br />
-            Total Synced: {getTotalSyncedRecords()}<br />
-            Progress: {calculateProgress()}%<br />
-            Auth Token: {localStorage.getItem('authToken') ? 'Present' : 'Missing'}
-          </div>
-
-          {/* Stats Cards with Real Tally Data */}
+          {/* Stats Cards */}
           <div className="stats-grid">
             {/* Masters Card */}
             <div className="stat-card yellow1">
               <div className="stat-content">
                 <h3 style={{ fontWeight: "bold", fontSize: "18px" }}>
                   Masters
-                  {tallyData.masters.loading && <span className="loading-spinner">⟳</span>}
+                  {tallyData.masters.loading && (
+                    <span className="loading-spinner">⟳</span>
+                  )}
                 </h3>
                 <div style={{ marginTop: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
@@ -421,7 +251,7 @@ function QuickMigration() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "14px", color: "#718096" }}>Total Records in the Masters Field.</span>
-                    <span style={{ fontWeight: "600", background: '#ffeb3b', padding: '2px 4px' }}>
+                    <span style={{ fontWeight: "600", background: "#ffeb3b", padding: "2px 4px" }}>
                       {tallyData.masters.loading ? "Loading..." : tallyData.masters.total.toLocaleString()}
                     </span>
                   </div>
@@ -434,7 +264,9 @@ function QuickMigration() {
               <div className="stat-content">
                 <h3 style={{ fontWeight: "bold", fontSize: "18px" }}>
                   Transactions
-                  {tallyData.transactions.loading && <span className="loading-spinner">⟳</span>}
+                  {tallyData.transactions.loading && (
+                    <span className="loading-spinner">⟳</span>
+                  )}
                 </h3>
                 <div style={{ marginTop: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
@@ -451,7 +283,7 @@ function QuickMigration() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span style={{ fontSize: "14px", color: "#718096" }}>Total Records</span>
-                    <span style={{ fontWeight: "600", background: '#ffeb3b', padding: '2px 4px' }}>
+                    <span style={{ fontWeight: "600", background: "#ffeb3b", padding: "2px 4px" }}>
                       {tallyData.transactions.loading ? "Loading..." : tallyData.transactions.total.toLocaleString()}
                     </span>
                   </div>
@@ -465,35 +297,42 @@ function QuickMigration() {
                 <h3 style={{ fontWeight: "bold", fontSize: "18px" }}>
                   Sync Your Data in One Place
                 </h3>
-                <h3>
+                <p>
                   The sync process transfers Tally data to Zoho Books and keeps
                   master data updated across both systems.
-                </h3>
+                </p>
               </div>
               <div className="sync-button-container">
                 <button
-                  className={`sync-button ${isSync ? 'syncing' : ''}`}
+                  className={`sync-button ${isSync ? "syncing" : ""}`}
                   onClick={handleSyncNow}
-                  disabled={isSync || tallyData.masters.loading || tallyData.transactions.loading}
+                  disabled={
+                    isSync ||
+                    tallyData.masters.loading ||
+                    tallyData.transactions.loading
+                  }
                 >
-                  {isSync ? 'Syncing...' : 'Sync Now'}
+                  {isSync ? "Syncing..." : "Sync Now"}
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Dynamic Progress Bar Section */}
+          {/* Progress Section */}
           <div className="current-status-section">
             <div className="status-card-progress">
               <h2 className="status-title">Current Status</h2>
-
               <div className="status-info-progress">
                 <p className="status-description">
-                  Combined Records - {getTotalSyncedRecords().toLocaleString()} of {getTotalRecords().toLocaleString()} synced
+                  Combined Records -{" "}
+                  {getTotalSyncedRecords().toLocaleString()} of{" "}
+                  {getTotalRecords().toLocaleString()} synced
                   <br />
-                  <small style={{ color: '#666', fontSize: '12px' }}>
-                    Masters: {syncedRecords.masters.toLocaleString()}/{tallyData.masters.total.toLocaleString()} |
-                    Transactions: {syncedRecords.transactions.toLocaleString()}/{tallyData.transactions.total.toLocaleString()}
+                  <small style={{ color: "#666", fontSize: "12px" }}>
+                    Masters: {syncedRecords.masters.toLocaleString()}/
+                    {tallyData.masters.total.toLocaleString()} | Transactions:{" "}
+                    {syncedRecords.transactions.toLocaleString()}/
+                    {tallyData.transactions.total.toLocaleString()}
                   </small>
                 </p>
 
@@ -501,20 +340,18 @@ function QuickMigration() {
                   <div className="progress-bar-bg">
                     <div
                       className="progress-bar-fill"
-                      style={{ width: `${calculateProgress()}%` }}
+                      style={{ width: `${progress}%`, transition: "width 0.5s ease" }}
                     ></div>
                   </div>
                 </div>
 
                 <div className="progress-percentage-container">
                   <span className="progress-percentage-text">
-                    {calculateProgress()}% completed
+                    {progress}% completed
                   </span>
                 </div>
 
-                <div className="sync-status-text">
-                  {syncStatus}
-                </div>
+                <div className="sync-status-text">{syncStatus}</div>
               </div>
             </div>
           </div>
