@@ -60,18 +60,16 @@ const AuthPage = ({ initialMode = "signin" }) => {
           headers: { "Content-Type": "application/json" },
         }
       );
+      
+const token = response.data?.token;
+const name = response.data?.name;  // ← use name directly
 
-      const token = response.data?.token;
-      const name = response.data?.name;
-      const email = response.data?.email;
-
-      if (token) {
-        localStorage.setItem("authToken", token);
-      }
-      if (name) {
-        localStorage.setItem("userName", name);
-        localStorage.setItem("userEmail", email);
-      }
+if (token) {
+    localStorage.setItem("authToken", token);
+}
+if (name) {
+    localStorage.setItem("userData", JSON.stringify({ name: name }));
+}
 
       navigate("/dashboard");
 

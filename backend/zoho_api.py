@@ -192,7 +192,7 @@ def organizations():
     access_token = get_access_token()
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
     response = requests.get(
-        "https://www.zohoapis.com/books/v3/organizations",
+        "https://www.zohoapis.in/books/v3/organizations",
         headers=headers
     )
     return jsonify(response.json())
@@ -203,7 +203,7 @@ def customers():
     access_token = get_access_token()
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
     response = requests.get(
-        f"https://www.zohoapis.com/books/v3/contacts?organization_id={ORG_ID}",
+        f"https://www.zohoapis.in/books/v3/contacts?organization_id={ORG_ID}",
         headers=headers
     )
     return jsonify(response.json())
@@ -214,7 +214,7 @@ def invoices():
     access_token = get_access_token()
     headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
     response = requests.get(
-        f"https://www.zohoapis.com/books/v3/invoices?organization_id={ORG_ID}",
+        f"https://www.zohoapis.in/books/v3/invoices?organization_id={ORG_ID}",
         headers=headers
     )
     return jsonify(response.json())

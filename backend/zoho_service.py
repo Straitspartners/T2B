@@ -23,7 +23,7 @@ app = Flask(__name__)
 
 
 ZOHO_TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
-ZOHO_BOOKS_API_BASE_URL = "https://www.zohoapis.com/books/v3"
+ZOHO_BOOKS_API_BASE_URL = "https://www.zohoapis.in/books/v3"
 
 
 # Keep the current access token in memory. Zoho access tokens are short-lived,
