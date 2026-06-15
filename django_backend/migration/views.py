@@ -1,35 +1,55 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import AppUser, Invoice, InvoiceLineItem, Receipt, ZohoConfig
+from django.db import models
+from .models import AppUser, Invoice, InvoiceLineItem, Receipt, ZohoConfig, Account, Item, Customer, Vendor, Tax, Purchase, PurchaseLineItem, Payment, CreditNote, VendorCredit, Journal, OpeningBalance, Expense
 import json
 import jwt
 import datetime
 import bcrypt
 import os
 import re
+import threading
 from decimal import Decimal, InvalidOperation
 import requests as req
 
+# ---------------- IN-MEMORY STORE ----------------
+
+_sync_store = {
+    'customers': [],
+    'vendors': [],
+    'accounts': [],
+    'items': [],
+    'invoices': [],
+    'receipts': [],
+    'bills': [],
+    'payments': [],
+    'credit_notes': [],
+    'vendor_credits': [],
+    'journals': [],
+}
+
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "your_secret_key_here_minimum_32_characters_long")
 
-ZOHO_BOOKS_BASE = "https://www.zohoapis.in/books/v3"
+ZOHO_BOOKS_BASE = "https://www.zohoapis.com/books/v3"
 
 
 # ---------------- AUTH HELPERS ----------------
 
 def verify_token(request):
     auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-    if not auth_header.startswith('Bearer '):
+    
+    if not auth_header.startswith('Bearer ') and not auth_header.startswith('Token '):
         raise ValueError('Authentication token not found. Please login again.')
+    
     token = auth_header.split(' ')[1]
+    
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
     except jwt.ExpiredSignatureError:
         raise ValueError('Token expired. Please login again.')
     except jwt.InvalidTokenError:
         raise ValueError('Invalid token. Please login again.')
-
 
 def _get_user_by_email_or_username(identifier):
     try:
@@ -43,7 +63,6 @@ def _get_user_by_email_or_username(identifier):
 
 
 def _get_zoho_config(user_email):
-    """Retrieve stored Zoho config for this user. Raises ValueError if not found."""
     try:
         return ZohoConfig.objects.get(user_email=user_email)
     except ZohoConfig.DoesNotExist:
@@ -51,11 +70,6 @@ def _get_zoho_config(user_email):
 
 
 def _refresh_zoho_token(config):
-    """
-    Use the stored refresh_token to obtain a new access_token from Zoho OAuth.
-    Updates the config object in-place and persists to DB.
-    Returns the new access_token string.
-    """
     resp = req.post(
         'https://accounts.zoho.com/oauth/v2/token',
         params={
@@ -81,7 +95,6 @@ def _zoho_headers(access_token):
 
 
 def _zoho_get(url, config):
-    """GET helper that auto-refreshes on 401."""
     resp = req.get(url, headers=_zoho_headers(config.access_token))
     if resp.status_code == 401:
         _refresh_zoho_token(config)
@@ -90,7 +103,6 @@ def _zoho_get(url, config):
 
 
 def _zoho_post(url, payload, config):
-    """POST helper that auto-refreshes on 401."""
     resp = req.post(url, json=payload, headers=_zoho_headers(config.access_token))
     if resp.status_code == 401:
         _refresh_zoho_token(config)
@@ -99,7 +111,6 @@ def _zoho_post(url, payload, config):
 
 
 def _zoho_put(url, payload, config):
-    """PUT helper that auto-refreshes on 401."""
     resp = req.put(url, json=payload, headers=_zoho_headers(config.access_token))
     if resp.status_code == 401:
         _refresh_zoho_token(config)
@@ -119,44 +130,75 @@ def _find_existing_contact(name, contact_type, config):
     return None
 
 
+def _find_existing_account(name, config):
+    """Return account_id if a chart-of-accounts entry with this name already exists in Zoho, else None."""
+    org = config.organization_id
+    url = f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}"
+    resp = _zoho_get(url, config)
+    if resp.status_code == 200:
+        for acct in resp.json().get('chartofaccounts', []):
+            if acct.get('account_name', '').strip().lower() == name.strip().lower():
+                return acct['account_id']
+    return None
+
+
+def _find_existing_item(name, config):
+    """Return item_id if an item with this name already exists in Zoho Books, else None."""
+    org = config.organization_id
+    url = f"{ZOHO_BOOKS_BASE}/items?organization_id={org}&name={name}"
+    resp = _zoho_get(url, config)
+    if resp.status_code == 200:
+        items = resp.json().get('items', [])
+        for item in items:
+            if item.get('name', '').strip().lower() == name.strip().lower():
+                return item['item_id']
+    return None
+
+
+# FIX 5: Build a name→tax_id lookup from Zoho's tax list
+def _build_zoho_tax_map(config):
+    """Returns dict of tax_name.lower() -> tax_id from Zoho Books."""
+    org = config.organization_id
+    url = f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}"
+    resp = _zoho_get(url, config)
+    tax_map = {}
+    if resp.status_code == 200:
+        for t in resp.json().get('taxes', []):
+            tax_map[t.get('tax_name', '').strip().lower()] = t['tax_id']
+    return tax_map
+
+
+# FIX 5: Build a name→account_id lookup from Zoho's chart of accounts
+def _build_zoho_account_map(config):
+    """Returns dict of account_name.lower() -> account_id from Zoho Books."""
+    org = config.organization_id
+    url = f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}"
+    resp = _zoho_get(url, config)
+    account_map = {}
+    if resp.status_code == 200:
+        for a in resp.json().get('chartofaccounts', []):
+            account_map[a.get('account_name', '').strip().lower()] = a['account_id']
+    return account_map
+
+
 # ---------------- LINE ITEM HELPERS ----------------
 
 def _parse_quantity(raw_qty):
-    """
-    Parse a quantity string like "2 Nos", "5 Kg", "3.5 Box" into (Decimal, str).
-
-    Returns:
-        (qty_value: Decimal, qty_unit: str)
-
-    Examples:
-        "1 Nos"  → (Decimal('1'), 'Nos')
-        "2.5 Kg" → (Decimal('2.5'), 'Kg')
-        "3"      → (Decimal('3'), 'Nos')   # unit defaults to 'Nos'
-        ""       → (Decimal('1'), 'Nos')   # fallback
-    """
     raw = (raw_qty or '').strip()
     if not raw:
         return Decimal('1'), 'Nos'
-
-    # Match leading number (int or decimal), then optional whitespace + unit text
     match = re.match(r'^(\d+(?:\.\d+)?)\s*(.*)$', raw)
     if not match:
         return Decimal('1'), 'Nos'
-
     try:
         qty_value = Decimal(match.group(1))
     except InvalidOperation:
         qty_value = Decimal('1')
-
     qty_unit = match.group(2).strip() or 'Nos'
     return qty_value, qty_unit
 
 
 def _derive_rate(amount, qty_value):
-    """
-    Derive unit rate from total line amount and quantity.
-    Returns Decimal. Avoids division by zero (returns amount as rate if qty is 0).
-    """
     try:
         amount_d = Decimal(str(amount))
         qty_d = Decimal(str(qty_value))
@@ -168,80 +210,45 @@ def _derive_rate(amount, qty_value):
 
 
 def _save_line_items(invoice, raw_line_items):
-    """
-    Delete existing line items for this invoice and recreate from raw_line_items.
-
-    Each item in raw_line_items is expected to look like:
-        {
-            "item_name": "Product A",
-            "quantity": "2 Nos",
-            "amount": "500.00"
-        }
-    """
     invoice.line_items.all().delete()
-
     items_to_create = []
     for item in raw_line_items:
         raw_qty = item.get('quantity', '1 Nos')
         qty_value, qty_unit = _parse_quantity(raw_qty)
-
         try:
             amount = Decimal(str(item.get('amount', '0')))
         except InvalidOperation:
             amount = Decimal('0')
-
         rate = _derive_rate(amount, qty_value)
-
         items_to_create.append(InvoiceLineItem(
             invoice=invoice,
             item_name=item.get('item_name', ''),
-            quantity_raw=raw_qty,
+            # quantity_raw=raw_qty,
             qty_value=qty_value,
             qty_unit=qty_unit,
             amount=amount,
             rate=rate,
         ))
-
     if items_to_create:
         InvoiceLineItem.objects.bulk_create(items_to_create)
 
 
 def _build_zoho_line_items(invoice):
-    """
-    Build the line_items list expected by the Zoho Books API from stored InvoiceLineItems.
-
-    If no line items exist (legacy data), falls back to a single synthetic line
-    derived from the invoice total minus taxes.
-
-    Zoho line item shape:
-        {
-            "name": "Product A",
-            "description": "Product A",
-            "rate": 250.00,
-            "quantity": 2.0,
-            "unit": "Nos"
-        }
-    """
     db_items = list(invoice.line_items.all())
-
     if db_items:
-        zoho_items = []
-        for li in db_items:
-            zoho_items.append({
-                'name': li.item_name,
-                'description': li.item_name,
-                'rate': float(li.rate),
-                'quantity': float(li.qty_value),
-                'unit': li.qty_unit,
-            })
-        return zoho_items
+        return [{
+            'name': li.item_name,
+            'description': li.item_name,
+            'rate': float(li.rate),
+            'quantity': float(li.qty_value),
+            'unit': li.qty_unit,
+        } for li in db_items]
 
-    # ---- Fallback for invoices stored before line items were introduced ----
+    # Fallback for invoices without stored line items
     subtotal = float(invoice.total_amount or 0)
     cgst = float(invoice.cgst or 0)
     sgst = float(invoice.sgst or 0)
     taxable_amount = subtotal - cgst - sgst if subtotal > (cgst + sgst) else subtotal
-
     return [{
         'description': f'Invoice {invoice.invoice_number}',
         'rate': taxable_amount,
@@ -270,11 +277,7 @@ def register_user(request):
             return JsonResponse({'error': 'User already exists'}, status=400)
 
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-        AppUser.objects.create(
-            username=username,
-            email=email,
-            password=hashed.decode('utf-8')
-        )
+        AppUser.objects.create(username=username, email=email, password=hashed.decode('utf-8'))
 
         token = jwt.encode({
             'email': email,
@@ -376,9 +379,8 @@ def connect_zoho(request):
         if not all([client_id, client_secret, access_token, refresh_token, organization_id]):
             return JsonResponse({'error': 'All Zoho credentials are required'}, status=400)
 
-        # Validate the token against Zoho
         headers = {'Authorization': f'Zoho-oauthtoken {access_token}'}
-        test_response = req.get('https://www.zohoapis.in/books/v3/organizations', headers=headers)
+        test_response = req.get('https://www.zohoapis.com/books/v3/organizations', headers=headers)
 
         if test_response.status_code != 200:
             return JsonResponse({
@@ -386,7 +388,6 @@ def connect_zoho(request):
                 'zoho_response': test_response.json()
             }, status=400)
 
-        # Persist credentials linked to this user
         user_email = payload.get('email')
         ZohoConfig.objects.update_or_create(
             user_email=user_email,
@@ -404,20 +405,14 @@ def connect_zoho(request):
     return JsonResponse({'error': 'Invalid request'}, status=400)
 
 
-# ---------------- IN-MEMORY STORE (for masters/accounts/items) ----------------
-
-_sync_store = {
-    'customers': [],
-    'vendors': [],
-    'accounts': [],
-    'items': [],
-}
-
-
 # ---------------- AGENT DATA RECEIVERS ----------------
 
 @csrf_exempt
 def receive_customers(request):
+    """
+    FIX 7: Persist customers to DB (Customer model) AND keep in memory.
+    Previously only stored in memory — lost on server restart.
+    """
     if request.method == 'POST':
         try:
             verify_token(request)
@@ -425,6 +420,26 @@ def receive_customers(request):
             return JsonResponse({'error': str(e)}, status=401)
         data = json.loads(request.body)
         ledgers = data.get('ledgers', [])
+
+        for c in ledgers:
+            name = (c.get('name', '') or '').strip()
+            if not name:
+                continue
+            try:
+                Customer.objects.update_or_create(
+                    name=name,
+                    defaults={
+                        'email': c.get('email', '') or None,
+                        'phone': c.get('ledger_mobile', '') or None,
+                        'address': c.get('address', '') or None,
+                        'state': c.get('state_name', '') or None,
+                        'pincode': c.get('pincode', '') or None,
+                        'country': c.get('country_name', '') or 'India',
+                    }
+                )
+            except Exception as e:
+                print(f"⚠️ Customer save error for '{name}': {e}")
+
         _sync_store['customers'] = ledgers
         print(f"Received {len(ledgers)} customers")
         return JsonResponse({'status': 'received', 'count': len(ledgers)}, status=200)
@@ -433,6 +448,10 @@ def receive_customers(request):
 
 @csrf_exempt
 def receive_vendors(request):
+    """
+    FIX 7: Persist vendors to DB (Vendor model) AND keep in memory.
+    Previously only stored in memory — lost on server restart.
+    """
     if request.method == 'POST':
         try:
             verify_token(request)
@@ -440,6 +459,26 @@ def receive_vendors(request):
             return JsonResponse({'error': str(e)}, status=401)
         data = json.loads(request.body)
         ledgers = data.get('ledgers', [])
+
+        for v in ledgers:
+            name = (v.get('name', '') or '').strip()
+            if not name:
+                continue
+            try:
+                Vendor.objects.update_or_create(
+                    name=name,
+                    defaults={
+                        'email': v.get('email', '') or None,
+                        'phone': v.get('ledger_mobile', '') or None,
+                        'address': v.get('address', '') or None,
+                        'state': v.get('state_name', '') or None,
+                        'pincode': v.get('pincode', '') or None,
+                        'country': v.get('country_name', '') or 'India',
+                    }
+                )
+            except Exception as e:
+                print(f"⚠️ Vendor save error for '{name}': {e}")
+
         _sync_store['vendors'] = ledgers
         print(f"Received {len(ledgers)} vendors")
         return JsonResponse({'status': 'received', 'count': len(ledgers)}, status=200)
@@ -455,6 +494,16 @@ def receive_accounts(request):
             return JsonResponse({'error': str(e)}, status=401)
         data = json.loads(request.body)
         accounts = data.get('accounts', [])
+
+        for a in accounts:
+            Account.objects.update_or_create(
+                account_name=a.get('account_name', ''),
+                defaults={
+                    'account_code': a.get('account_code', ''),
+                    'account_type': a.get('account_type'),
+                }
+            )
+
         _sync_store['accounts'] = accounts
         print(f"Received {len(accounts)} accounts")
         return JsonResponse({'status': 'received', 'count': len(accounts)}, status=200)
@@ -470,38 +519,32 @@ def receive_items(request):
             return JsonResponse({'error': str(e)}, status=401)
         data = json.loads(request.body)
         items = data.get('items', [])
+
+        for i in items:
+            name = (i.get('name', '') or '').strip()
+            if not name or name.lower() == 'unknown':
+                continue
+            Item.objects.update_or_create(
+                name=i.get('name', ''),
+                defaults={
+                    'rate': str(i.get('rate', '0')),
+                    'description': i.get('description', ''),
+                    'sku': i.get('sku', ''),
+                    'product_type': i.get('product_type', ''),
+                    'type_of_supply': i.get('type_of_supply', 'Unknown'),      # ✅ ADD
+                    'gst_applicable': i.get('gst_applicable', ''),
+                    'gst_rate': str(i.get('gst_rate', '0')),
+                    'hsn_code': i.get('hsn_code', ''),
+                }
+            )
+
         _sync_store['items'] = items
         print(f"Received {len(items)} items")
         return JsonResponse({'status': 'received', 'count': len(items)}, status=200)
     return JsonResponse({'error': 'Invalid request'}, status=400)
 
-
 @csrf_exempt
 def receive_invoices(request):
-    """
-    Accepts invoices from the Tally agent and persists them along with their line items.
-
-    Expected payload shape:
-        {
-            "invoices": [
-                {
-                    "invoice_number": "INV-001",
-                    "customer_name": "Acme Corp",
-                    "invoice_date": "2024-01-15",
-                    "total_amount": "1180.00",
-                    "cgst": "90.00",
-                    "sgst": "90.00",
-                    "line_items": [
-                        {
-                            "item_name": "Product A",
-                            "quantity": "2 Nos",
-                            "amount": "1000.00"
-                        }
-                    ]
-                }
-            ]
-        }
-    """
     if request.method == 'POST':
         try:
             verify_token(request)
@@ -527,8 +570,7 @@ def receive_invoices(request):
                 }
             )
 
-            # Save line items if provided
-            raw_line_items = inv_data.get('line_items', [])
+            raw_line_items = inv_data.get('line_items') or inv_data.get('items') or []
             if raw_line_items:
                 _save_line_items(invoice, raw_line_items)
 
@@ -564,7 +606,240 @@ def receive_receipts(request):
     return JsonResponse({'error': 'Invalid request'}, status=400)
 
 
+@csrf_exempt
+def receive_purchases(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        bills = data.get('bills', [])
+        _sync_store['bills'] = bills
+        from datetime import datetime
+        saved = 0
+        for b in bills:
+            try:
+                date = datetime.strptime(b['bill_date'], '%Y-%m-%d').date() if b.get('bill_date') else None
+                purchase, _ = Purchase.objects.update_or_create(
+                    bill_number=b['bill_number'],
+                    defaults={
+                        'vendor_name': b.get('vendor_name', ''),
+                        'bill_date': date,
+                        'amount': str(b.get('total_amount', '0')),
+                        'total_amount': b.get('total_amount', '0'),
+                        'cgst': str(b.get('cgst', '0')),
+                        'sgst': str(b.get('sgst', '0')),
+                        'igst': str(b.get('igst', '0')),
+                    }
+                )
+                # Save bill line items to DB
+                raw_lines = b.get('line_items', [])
+                if raw_lines:
+                    purchase.line_items.all().delete()
+                    items_to_create = []
+                    for li in raw_lines:
+                        try:
+                            amt = Decimal(str(li.get('amount', '0')))
+                        except InvalidOperation:
+                            amt = Decimal('0')
+                        qty_raw = (li.get('quantity') or '1').strip()
+                        qty_match = re.match(r'^(\d+(?:\.\d+)?)', qty_raw)
+                        qty = Decimal(qty_match.group(1)) if qty_match else Decimal('1')
+                        rate = (amt / qty).quantize(Decimal('0.01')) if qty > 0 else amt
+                        items_to_create.append(PurchaseLineItem(
+                            purchase=purchase,
+                            item_name=li.get('item_name', ''),
+                            quantity=qty_raw,
+                            amount=amt,
+                            rate=rate,
+                        ))
+                    if items_to_create:
+                        PurchaseLineItem.objects.bulk_create(items_to_create)
+                saved += 1
+            except Exception as e:
+                print(f"⚠️ Bill save error: {e}")
+        print(f"Received {len(bills)} bills, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(bills)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+@csrf_exempt
+def receive_payments(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        payments = data.get('payments', [])
+        _sync_store['payments'] = payments
+        from datetime import datetime
+        saved = 0
+        for p in payments:
+            try:
+                date = datetime.strptime(p['payment_date'], '%Y-%m-%d').date() if p.get('payment_date') else None
+                Payment.objects.update_or_create(
+                    payment_number=p['payment_number'],
+                    defaults={
+                        'vendor_name': p.get('vendor_name', ''),
+                        'payment_date': date,
+                        'amount': p.get('amount', '0'),
+                        'payment_mode': p.get('payment_mode', ''),
+                    }
+                )
+                saved += 1
+            except Exception as e:
+                print(f"⚠️ Payment save error: {e}")
+        print(f"Received {len(payments)} payments, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(payments)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def receive_credit_notes(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        credit_notes = data.get('credit_notes', [])
+        _sync_store['credit_notes'] = credit_notes
+        from datetime import datetime
+        saved = 0
+        for c in credit_notes:
+            try:
+                date = datetime.strptime(c['credit_note_date'], '%Y-%m-%d').date() if c.get('credit_note_date') else None
+                CreditNote.objects.update_or_create(
+                    credit_note_number=c['credit_note_number'],
+                    defaults={
+                        'customer_name': c.get('customer_name', ''),
+                        'credit_note_date': date,
+                        'amount': str(c.get('total_amount', '0')), 
+                        'total_amount': str(c.get('total_amount', '0')),
+                        'cgst': str(c.get('cgst', '0')),
+                        'sgst': str(c.get('sgst', '0')),
+                        'igst': str(c.get('igst', '0')), 
+                    }
+                )
+                saved += 1
+            except Exception as e:
+                print(f"⚠️ Credit note save error: {e}")
+        print(f"Received {len(credit_notes)} credit notes, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(credit_notes)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def receive_vendor_credits(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        vendor_credits = data.get('vendor_credits', [])
+        _sync_store['vendor_credits'] = vendor_credits
+        from datetime import datetime
+        saved = 0
+        for v in vendor_credits:
+            try:
+                date = datetime.strptime(v['vendor_credit_date'], '%Y-%m-%d').date() if v.get('vendor_credit_date') else None
+                VendorCredit.objects.update_or_create(
+                    vendor_credit_number=v['vendor_credit_number'],
+                    defaults={
+                        'vendor_name': v.get('vendor_name', ''),
+                        'vendor_credit_date': date,
+                        'total_amount': str(v.get('total_amount', '0')),
+                        'cgst': str(v.get('cgst', '0')),
+                        'sgst': str(v.get('sgst', '0')),
+                    }
+                )
+                saved += 1
+            except Exception as e:
+                print(f"⚠️ Vendor credit save error: {e}")
+        print(f"Received {len(vendor_credits)} vendor credits, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(vendor_credits)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def receive_journals(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        journals = data.get('journals', [])
+        from datetime import datetime
+        from .models import JournalLine
+        saved = 0
+        for j in journals:
+            try:
+                date = datetime.strptime(j['journal_date'], '%Y-%m-%d').date() if j.get('journal_date') else None
+                journal_obj, _ = Journal.objects.update_or_create(
+                    voucher_number=j['journal_number'],
+                    defaults={
+                        'voucher_date': date,
+                        'narration': j.get('narration', ''),
+                        'amount': j.get('total_amount', '0'),
+                    }
+                )
+                lines = j.get('lines', [])
+                if lines:
+                    JournalLine.objects.filter(journal=journal_obj).delete()
+                    for line in lines:
+                        JournalLine.objects.create(
+                            journal=journal_obj,
+                            account_name=line.get('account_name', ''),
+                            debit=line.get('debit', '0'),
+                            credit=line.get('credit', '0'),
+                        )
+                saved += 1
+            except Exception as e:
+                print(f"⚠️ Journal save error: {e}")
+        print(f"Received {len(journals)} journals, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(journals)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
 # ---------------- DASHBOARD & MIGRATION STATUS ----------------
+
+
+@csrf_exempt
+def receive_expenses(request):
+    """
+    Receives expense entries from the agent.
+    These are Payment vouchers in Tally where the debit side is an
+    expense account (not a vendor/sundry creditor).
+    """
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        expenses = data.get('expenses', [])
+        from datetime import datetime
+        saved = 0
+        for e in expenses:
+            try:
+                date = datetime.strptime(e['payment_date'], '%Y-%m-%d').date() if e.get('payment_date') else None
+                Expense.objects.update_or_create(
+                    payment_number=e.get('payment_number', ''),
+                    defaults={
+                        'payment_date': date,
+                        'account_name': e.get('account_name', ''),
+                        'paid_through': e.get('paid_through', 'Cash'),
+                        'amount': e.get('amount', '0'),
+                        'narration': e.get('narration', ''),
+                    }
+                )
+                saved += 1
+            except Exception as ex:
+                print(f"⚠️ Expense save error: {ex}")
+        print(f"Received {len(expenses)} expenses, saved {saved} to DB")
+        return JsonResponse({'status': 'received', 'count': len(expenses)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
 
 @csrf_exempt
 def data_migration_status(request):
@@ -574,10 +849,11 @@ def data_migration_status(request):
         except ValueError as e:
             return JsonResponse({'error': str(e)}, status=401)
 
-        customers = len(_sync_store['customers'])
-        vendors = len(_sync_store['vendors'])
-        coa = len(_sync_store['accounts'])
-        items = len(_sync_store['items'])
+        # FIX 7: Read customers/vendors from DB, not just memory
+        customers = Customer.objects.count()
+        vendors = Vendor.objects.count()
+        coa = Account.objects.count()
+        items = Item.objects.count()
 
         total_invoices = Invoice.objects.count()
         migrated_invoices = Invoice.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
@@ -585,8 +861,19 @@ def data_migration_status(request):
         total_receipts = Receipt.objects.count()
         migrated_receipts = Receipt.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
 
-        total = customers + vendors + coa + items + total_invoices + total_receipts
-        migrated = migrated_invoices + migrated_receipts
+        migrated_accounts = Account.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_items = Item.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+
+        migrated_customers = Customer.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_vendors = Vendor.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_payments = Payment.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_bills = Purchase.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_credit_notes = CreditNote.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_vendor_credits = VendorCredit.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_journals = Journal.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+
+        total = customers + vendors + coa + items + total_invoices + total_receipts + Purchase.objects.count() + Payment.objects.count() + CreditNote.objects.count() + VendorCredit.objects.count() + Journal.objects.count()
+        migrated = migrated_invoices + migrated_receipts + migrated_accounts + migrated_items + migrated_customers + migrated_vendors + migrated_payments + migrated_bills + migrated_credit_notes + migrated_vendor_credits + migrated_journals
 
         return JsonResponse({
             'fetched_from_tally': total,
@@ -613,33 +900,57 @@ def total_records(request):
         except ValueError as e:
             return JsonResponse({'error': str(e)}, status=401)
 
-        masters = (
-            len(_sync_store['customers']) +
-            len(_sync_store['vendors']) +
-            len(_sync_store['accounts']) +
-            len(_sync_store['items'])
+        migrated_customers = Customer.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_vendors = Vendor.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_accounts = Account.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_items = Item.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        migrated_taxes = Tax.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+
+        master_count = (
+            Customer.objects.count() +
+            Vendor.objects.count() +
+            Account.objects.count() +
+            Item.objects.count() +
+            Tax.objects.count()
+        )
+        migrated_masters = (
+            migrated_customers + migrated_vendors +
+            migrated_accounts + migrated_items + migrated_taxes
         )
 
-        total_invoices = Invoice.objects.count()
-        migrated_invoices = Invoice.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
-
-        total_receipts = Receipt.objects.count()
-        migrated_receipts = Receipt.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
-
-        transactions = total_invoices + total_receipts
-        transactions_migrated = migrated_invoices + migrated_receipts
+        total_trans = (
+            Invoice.objects.count() +
+            Receipt.objects.count() +
+            Purchase.objects.count() +
+            Payment.objects.count() +
+            CreditNote.objects.count() +
+            VendorCredit.objects.count() +
+            Journal.objects.count() +
+            Expense.objects.count() +
+            OpeningBalance.objects.count()
+        )
+        migrated_trans = (
+            Invoice.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            Receipt.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            Purchase.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            Payment.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            CreditNote.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            VendorCredit.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            Journal.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            Expense.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count() +
+            OpeningBalance.objects.filter(is_pushed=True).count()
+        )
 
         return JsonResponse({
-            'total': masters,
-            'migrated': 0,
-            'pending': masters,
-            'total_trans': transactions,
-            'transactions_migrated': transactions_migrated,
-            'transactions_pending': transactions - transactions_migrated,
+            'total': master_count,
+            'migrated': migrated_masters,
+            'pending': master_count - migrated_masters,
+            'total_trans': total_trans,
+            'transactions_migrated': migrated_trans,
+            'transactions_pending': total_trans - migrated_trans,
         }, status=200)
 
     return JsonResponse({'error': 'Invalid request'}, status=400)
-
 
 @csrf_exempt
 def get_masters(request):
@@ -652,45 +963,50 @@ def get_masters(request):
         activities = []
         sno = 1
 
-        for c in _sync_store['customers']:
+        # FIX 7: Read from DB instead of memory
+        for c in Customer.objects.all():
             activities.append({
                 'sNo': sno, 'type': 'Customer',
-                'name': c.get('name', 'Unknown'),
-                'status': 'Fetched', 'lastMigrated': '-'
+                'name': c.name,
+                'status': 'Migrated' if c.zoho_id else 'Fetched',
+                'lastMigrated': str(c.zoho_migrated_at.date()) if c.zoho_migrated_at else '-'
             })
             sno += 1
 
-        for v in _sync_store['vendors']:
+        for v in Vendor.objects.all():
             activities.append({
                 'sNo': sno, 'type': 'Vendor',
-                'name': v.get('name', 'Unknown'),
-                'status': 'Fetched', 'lastMigrated': '-'
+                'name': v.name,
+                'status': 'Migrated' if v.zoho_id else 'Fetched',
+                'lastMigrated': str(v.zoho_migrated_at.date()) if v.zoho_migrated_at else '-'
             })
             sno += 1
 
-        for a in _sync_store['accounts']:
+        for a in Account.objects.all():
             activities.append({
                 'sNo': sno, 'type': 'Account',
-                'name': a.get('account_name', 'Unknown'),
-                'status': 'Fetched', 'lastMigrated': '-'
+                'name': a.account_name,
+                'status': 'Migrated' if a.zoho_id else 'Fetched',
+                'lastMigrated': str(a.zoho_migrated_at.date()) if a.zoho_migrated_at else '-'
             })
             sno += 1
 
-        for i in _sync_store['items']:
+        for i in Item.objects.all():
             activities.append({
                 'sNo': sno, 'type': 'Item',
-                'name': i.get('name', 'Unknown'),
-                'status': 'Fetched', 'lastMigrated': '-'
+                'name': i.name,
+                'status': 'Migrated' if i.zoho_id else 'Fetched',
+                'lastMigrated': str(i.zoho_migrated_at.date()) if i.zoho_migrated_at else '-'
             })
             sno += 1
 
         return JsonResponse({
             'activities': activities,
             'counts': {
-                'customers': len(_sync_store['customers']),
-                'vendors': len(_sync_store['vendors']),
-                'accounts': len(_sync_store['accounts']),
-                'items': len(_sync_store['items']),
+                'customers': Customer.objects.count(),
+                'vendors': Vendor.objects.count(),
+                'accounts': Account.objects.count(),
+                'items': Item.objects.count(),
             }
         }, status=200)
 
@@ -710,25 +1026,73 @@ def get_transactions(request):
 
         for inv in Invoice.objects.all().order_by('-created_at'):
             activities.append({
-                'sNo': sno,
-                'type': 'Invoice',
+                'sNo': sno, 'type': 'Invoice',
                 'name': inv.customer_name,
                 'status': 'Migrated' if inv.zoho_id else 'Fetched',
                 'lastMigrated': str(inv.zoho_migrated_at.date()) if inv.zoho_migrated_at else '-',
                 'amount': inv.total_amount,
-                'zoho_id': inv.zoho_id or '',
             })
             sno += 1
 
         for rec in Receipt.objects.all().order_by('-created_at'):
             activities.append({
-                'sNo': sno,
-                'type': 'Receipt',
+                'sNo': sno, 'type': 'Receipt',
                 'name': rec.customer_name,
                 'status': 'Migrated' if rec.zoho_id else 'Fetched',
                 'lastMigrated': str(rec.zoho_migrated_at.date()) if rec.zoho_migrated_at else '-',
                 'amount': rec.amount,
-                'zoho_id': rec.zoho_id or '',
+            })
+            sno += 1
+
+        for b in Purchase.objects.all().order_by('-id'):
+            activities.append({
+                'sNo': sno, 'type': 'Bill',
+                'name': b.vendor_name,
+                'status': 'Migrated' if b.zoho_id else 'Fetched',
+                'lastMigrated': str(b.zoho_migrated_at.date()) if b.zoho_migrated_at else '-',
+                'amount': b.amount,
+            })
+            sno += 1
+
+        for p in Payment.objects.all().order_by('-id'):
+            activities.append({
+                'sNo': sno, 'type': 'Payment Made',
+                'name': p.vendor_name,
+                'status': 'Migrated' if p.zoho_id else 'Fetched',
+                'lastMigrated': str(p.zoho_migrated_at.date()) if p.zoho_migrated_at else '-',
+                'amount': p.amount,
+            })
+            sno += 1
+
+        for c in CreditNote.objects.all().order_by('-id'):
+            activities.append({
+                'sNo': sno, 'type': 'Credit Note',
+                'name': c.customer_name,
+                'status': 'Migrated' if c.zoho_id else 'Fetched',
+                'lastMigrated': str(c.zoho_migrated_at.date()) if c.zoho_migrated_at else '-',
+                'amount': c.amount,
+            })
+            sno += 1
+
+        for v in VendorCredit.objects.all().order_by('-id'):
+            activities.append({
+                'sNo': sno, 'type': 'Vendor Credit',
+                'name': v.vendor_name,
+                'status': 'Migrated' if v.zoho_id else 'Fetched',
+                'lastMigrated': str(v.zoho_migrated_at.date()) if v.zoho_migrated_at else '-',
+                'amount': v.amount,
+            })
+            sno += 1
+
+        for j in Journal.objects.all().order_by('-id'):
+            # Strip the __lines__ suffix for display
+            display_narration = j.narration.split('__lines__')[0] if '__lines__' in (j.narration or '') else j.narration
+            activities.append({
+                'sNo': sno, 'type': 'Journal',
+                'name': display_narration or f'Journal {j.voucher_number}',
+                'status': 'Migrated' if j.zoho_id else 'Fetched',
+                'lastMigrated': str(j.zoho_migrated_at.date()) if j.zoho_migrated_at else '-',
+                'amount': j.amount,
             })
             sno += 1
 
@@ -736,9 +1100,12 @@ def get_transactions(request):
             'activities': activities,
             'counts': {
                 'invoices': Invoice.objects.count(),
-                'invoices_migrated': Invoice.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count(),
                 'receipts': Receipt.objects.count(),
-                'receipts_migrated': Receipt.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count(),
+                'bills': Purchase.objects.count(),
+                'payments': Payment.objects.count(),
+                'credit_notes': CreditNote.objects.count(),
+                'vendor_credits': VendorCredit.objects.count(),
+                'journals': Journal.objects.count(),
             }
         }, status=200)
 
@@ -748,23 +1115,25 @@ def get_transactions(request):
 # ---------------- PUSH TO ZOHO ----------------
 
 def _push_customers(config, results):
-    """Upsert contacts (customers) in Zoho Books — no duplicates."""
+    """Upsert contacts (customers) in Zoho Books — reads from DB."""
     org = config.organization_id
     success, failed = 0, 0
 
-    for c in _sync_store['customers']:
-        name = c.get('name', '')
+    # FIX 7: Read from DB instead of memory
+    for c in Customer.objects.all():
+        if c.zoho_id:
+            continue
+        name = c.name
         payload = {
             'contact_name': name,
             'contact_type': 'customer',
-            'email': c.get('email', ''),
-            'phone': c.get('phone', ''),
+            'email': c.email or '',
+            'phone': c.phone or '',
             'billing_address': {
-                'address': c.get('address', ''),
-                'city': c.get('city', ''),
-                'state': c.get('state', ''),
-                'zip': c.get('pincode', ''),
-                'country': c.get('country', 'India'),
+                'address': c.address or '',
+                'state': c.state or '',
+                'zip': c.pincode or '',
+                'country': c.country or 'India',
             }
         }
 
@@ -772,37 +1141,45 @@ def _push_customers(config, results):
         if existing_id:
             url = f"{ZOHO_BOOKS_BASE}/contacts/{existing_id}?organization_id={org}"
             resp = _zoho_put(url, payload, config)
+            if resp.status_code in (200, 201):
+                c.mark_migrated(existing_id)
+                success += 1
         else:
             url = f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}"
             resp = _zoho_post(url, payload, config)
-
-        if resp.status_code in (200, 201):
-            success += 1
-        else:
-            failed += 1
-            print(f"[Customer] Failed: {name} → {resp.text}")
+            if resp.status_code in (200, 201):
+                c.mark_migrated(resp.json().get('contact', {}).get('contact_id', ''))
+                success += 1
+            else:
+                failed += 1
+                print(f"[Customer] Failed: {name} → {resp.text}")
 
     results['customers'] = {'success': success, 'failed': failed}
+    print(f"{'='*50}")
+    print(f"✅ CUSTOMERS pushed → success: {success} | failed: {failed}")
+    print(f"{'='*50}")
 
 
 def _push_vendors(config, results):
-    """Upsert contacts (vendors) in Zoho Books — no duplicates."""
+    """Upsert contacts (vendors) in Zoho Books — reads from DB."""
     org = config.organization_id
     success, failed = 0, 0
 
-    for v in _sync_store['vendors']:
-        name = v.get('name', '')
+    # FIX 7: Read from DB instead of memory
+    for v in Vendor.objects.all():
+        if v.zoho_id:
+            continue
+        name = v.name
         payload = {
             'contact_name': name,
             'contact_type': 'vendor',
-            'email': v.get('email', ''),
-            'phone': v.get('phone', ''),
+            'email': v.email or '',
+            'phone': v.phone or '',
             'billing_address': {
-                'address': v.get('address', ''),
-                'city': v.get('city', ''),
-                'state': v.get('state', ''),
-                'zip': v.get('pincode', ''),
-                'country': v.get('country', 'India'),
+                'address': v.address or '',
+                'state': v.state or '',
+                'zip': v.pincode or '',
+                'country': v.country or 'India',
             }
         }
 
@@ -810,153 +1187,325 @@ def _push_vendors(config, results):
         if existing_id:
             url = f"{ZOHO_BOOKS_BASE}/contacts/{existing_id}?organization_id={org}"
             resp = _zoho_put(url, payload, config)
+            if resp.status_code in (200, 201):
+                v.mark_migrated(existing_id)
+                success += 1
         else:
             url = f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}"
             resp = _zoho_post(url, payload, config)
-
-        if resp.status_code in (200, 201):
-            success += 1
-        else:
-            failed += 1
-            print(f"[Vendor] Failed: {name} → {resp.text}")
+            if resp.status_code in (200, 201):
+                v.mark_migrated(resp.json().get('contact', {}).get('contact_id', ''))
+                success += 1
+            else:
+                failed += 1
+                print(f"[Vendor] Failed: {name} → {resp.text}")
 
     results['vendors'] = {'success': success, 'failed': failed}
+    print(f"{'='*50}")
+    print(f"✅ VENDORS pushed → success: {success} | failed: {failed}")
+    print(f"{'='*50}")
+
+
+# FIX 2: Unified account type map — single source of truth
+ACCOUNT_TYPE_MAP = {
+    'sundry debtors': 'accounts_receivable',
+    'sundry creditors': 'accounts_payable',
+    'bank accounts': 'bank',
+    'bank occ a/c': 'bank',
+    'bank od a/c': 'bank',
+    'cash-in-hand': 'cash',
+    'capital account': 'equity',
+    'reserves & surplus': 'equity',
+    'loans (liability)': 'long_term_liability',
+    'secured loans': 'other_liability',
+    'unsecured loans': 'long_term_liability',
+    'fixed assets': 'fixed_asset',
+    'purchase accounts': 'cost_of_goods_sold',
+    'stock-in-hand': 'cost_of_goods_sold',
+    'sales accounts': 'income',
+    'direct incomes': 'income',
+    'indirect incomes': 'other_income',
+    'direct expenses': 'expense',
+    'indirect expenses': 'other_expense',
+    'current assets': 'other_current_asset',
+    'current liabilities': 'other_current_liability',
+    # FIX 2: Duties & Taxes = LIABILITY (was other_current_asset — wrong)
+    'duties & taxes': 'other_current_liability',
+    'provisions': 'other_current_liability',
+    'deposits (asset)': 'other_current_asset',
+    'loans & advances (asset)': 'other_current_asset',
+    'investments': 'other_current_asset',
+    'misc. expenses (asset)': 'other_asset',
+    'branch / divisions': 'other_liability',
+    'suspense a/c': 'other_liability',
+    'retained earnings': 'income',
+}
 
 
 def _push_accounts(config, results):
-    """Create chart-of-accounts entries in Zoho Books."""
     org = config.organization_id
-    url = f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}"
-    success, failed = 0, 0
+    success, failed, skipped = 0, 0, 0
 
-    ACCOUNT_TYPE_MAP = {
-        'sundry debtors': 'accounts_receivable',
-        'sundry creditors': 'accounts_payable',
-        'bank accounts': 'bank',
-        'cash-in-hand': 'cash',
-        'capital account': 'equity',
-        'loans (liability)': 'long_term_liability',
-        'fixed assets': 'fixed_asset',
-        'purchase accounts': 'cost_of_goods_sold',
-        'sales accounts': 'income',
-        'indirect expenses': 'expense',
-        'indirect income': 'other_income',
-        'direct expenses': 'cost_of_goods_sold',
-    }
+    for account in Account.objects.all():
+        if account.zoho_id:
+            skipped += 1
+            continue
 
-    for a in _sync_store['accounts']:
-        raw_type = a.get('account_type', '').lower()
+        # FIX 2: Use unified map with lowercase lookup
+        raw_type = (account.account_type or '').lower()
         zoho_type = ACCOUNT_TYPE_MAP.get(raw_type, 'expense')
 
         payload = {
-            'account_name': a.get('account_name', ''),
+            'account_name': account.account_name,
             'account_type': zoho_type,
-            'description': a.get('description', ''),
         }
+
+        existing_id = _find_existing_account(account.account_name, config)
+        if existing_id:
+            account.mark_migrated(existing_id)
+            skipped += 1
+            continue
+
+        url = f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}"
         resp = _zoho_post(url, payload, config)
+
         if resp.status_code in (200, 201):
+            zoho_account_id = resp.json().get('chart_of_account', {}).get('account_id', '')
+            account.mark_migrated(zoho_account_id)
             success += 1
         else:
             failed += 1
-            print(f"[Account] Failed: {a.get('account_name')} → {resp.text}")
+            print(f"[Account] Failed: {account.account_name} → {resp.text}")
 
-    results['accounts'] = {'success': success, 'failed': failed}
+    results['accounts'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ ACCOUNTS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
 
 
 def _push_items(config, results):
-    """Create items (products/services) in Zoho Books."""
     org = config.organization_id
-    url = f"{ZOHO_BOOKS_BASE}/items?organization_id={org}"
-    success, failed = 0, 0
+    success, failed, skipped = 0, 0, 0
 
-    for i in _sync_store['items']:
+    for item in Item.objects.all():
+        if item.zoho_id:
+            skipped += 1
+            continue
+
+        existing_id = _find_existing_item(item.name, config)
+        if existing_id:
+            item.mark_migrated(existing_id)
+            skipped += 1
+            continue
+
+        try:
+            rate = float(item.rate or 0)
+        except (ValueError, TypeError):
+            rate = 0.0
+
         payload = {
-            'name': i.get('name', ''),
-            'rate': float(i.get('rate') or i.get('price') or 0),
-            'description': i.get('description', ''),
-            'sku': i.get('sku', ''),
-            'unit': i.get('unit', ''),
+            'name': item.name,
+            'rate': rate,
+            'description': item.description or '',
+            'sku': item.sku or '',
+            'unit': item.product_type or '',
             'item_type': 'sales_and_purchases',
         }
-        if i.get('tax_id'):
-            payload['tax_id'] = i['tax_id']
 
+        url = f"{ZOHO_BOOKS_BASE}/items?organization_id={org}"
         resp = _zoho_post(url, payload, config)
+
         if resp.status_code in (200, 201):
+            zoho_item_id = resp.json().get('item', {}).get('item_id', '')
+            item.mark_migrated(zoho_item_id)
             success += 1
         else:
             failed += 1
-            print(f"[Item] Failed: {i.get('name')} → {resp.text}")
+            print(f"[Item] Failed: {item.name} → {resp.text}")
 
-    results['items'] = {'success': success, 'failed': failed}
+    results['items'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ ITEMS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
 
+
+def _push_taxes(config, results):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    # Fetch all existing taxes from Zoho once
+    check_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}", config)
+    existing_tax_map = {}
+    if check_resp.status_code == 200:
+        for t in check_resp.json().get('taxes', []):
+            existing_tax_map[t.get('tax_name', '').strip().lower()] = t['tax_id']
+
+    for tax in Tax.objects.all():
+        if tax.zoho_id:
+            skipped += 1
+            continue
+
+        # Check if already exists in Zoho by name
+        match_id = existing_tax_map.get(tax.tax_name.strip().lower())
+        if match_id:
+            tax.mark_migrated(match_id)
+            skipped += 1
+            continue
+
+        payload = {
+            'tax_name': tax.tax_name,
+            'tax_percentage': float(tax.tax_rate or 0),
+            'tax_type': 'tax',
+            'is_active': tax.is_active,
+        }
+        url = f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}"
+        resp = _zoho_post(url, payload, config)
+        if resp.status_code in (200, 201):
+            zoho_tax_id = resp.json().get('tax', {}).get('tax_id', '')
+            tax.mark_migrated(zoho_tax_id)
+            success += 1
+        else:
+            failed += 1
+            print(f"[Tax] Failed: {tax.tax_name} → {resp.text}")
+
+    results['taxes'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ TAXES pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
 
 def _resolve_customer_id(customer_name, config):
-    """
-    Look up a Zoho contact ID by display name.
-    Returns the contact_id string, or None if not found.
-    """
+    # FIX 7: Check DB first before hitting Zoho API
+    db_customer = Customer.objects.filter(name=customer_name).first()
+    if db_customer and db_customer.zoho_id:
+        return db_customer.zoho_id
+
     org = config.organization_id
     url = f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}&contact_name={customer_name}&contact_type=customer"
     resp = _zoho_get(url, config)
     if resp.status_code == 200:
         contacts = resp.json().get('contacts', [])
         if contacts:
-            return contacts[0]['contact_id']
+            zoho_id = contacts[0]['contact_id']
+            # Cache it in DB
+            if db_customer:
+                db_customer.zoho_id = zoho_id
+                db_customer.save(update_fields=['zoho_id'])
+            return zoho_id
     return None
 
+
+def _resolve_vendor_id(vendor_name, config):
+    # FIX 7: Check DB first before hitting Zoho API
+    db_vendor = Vendor.objects.filter(name=vendor_name).first()
+    if db_vendor and db_vendor.zoho_id:
+        return db_vendor.zoho_id
+    return _find_existing_contact(vendor_name, 'vendor', config)
+
+def _get_zoho_account_id(account_type, config):
+    org = config.organization_id
+    resp = _zoho_get(
+        f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={account_type}",
+        config
+    )
+    if resp.status_code == 200:
+        accounts = resp.json().get('chartofaccounts', [])
+        if accounts:
+            print(f"[Account] Found {account_type}: {accounts[0]['account_name']} → {accounts[0]['account_id']}")
+            return accounts[0]['account_id']
+    return None
 
 def _push_invoices(config, results):
     """
     Push invoices to Zoho Books.
-
-    Line items are built from InvoiceLineItem rows (with parsed qty and derived rate).
-    Falls back to a single synthetic line item for legacy invoices without stored line items.
-    Skips records already migrated (zoho_id set).
+    Line items are linked to a Sales/Income account so they appear
+    correctly in the Trial Balance under Income.
     """
     org = config.organization_id
-    url = f"{ZOHO_BOOKS_BASE}/invoices?organization_id={org}"
     success, failed, skipped = 0, 0, 0
-
+ 
+    # Get a sales income account to attach to line items
+    sales_account_id = _get_zoho_account_id('income', config)
+    print(f"[Invoice] sales_account_id = {sales_account_id}")
+ 
     for inv in Invoice.objects.prefetch_related('line_items').all():
         if inv.zoho_id:
             skipped += 1
             continue
-
+ 
         customer_id = _resolve_customer_id(inv.customer_name, config)
         if not customer_id:
-            failed += 1
-            print(f"[Invoice] No customer found for: {inv.customer_name}")
-            continue
-
-        line_items = _build_zoho_line_items(inv)
-
+            # Create Cash Customer on the fly for B2C invoices
+            if inv.customer_name == "Cash Customer":
+                resp_c = _zoho_post(
+                    f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}",
+                    {'contact_name': 'Cash Customer', 'contact_type': 'customer'},
+                    config
+                )
+                if resp_c.status_code in (200, 201):
+                    customer_id = resp_c.json().get('contact', {}).get('contact_id', '')
+                    Customer.objects.update_or_create(
+                        name='Cash Customer',
+                        defaults={'zoho_id': customer_id}
+                    )
+            if not customer_id:
+                failed += 1
+                print(f"[Invoice] No customer found for: {inv.customer_name}")
+                continue
+ 
+        # Build line items with account_id
+        db_items = list(inv.line_items.all())
+        if db_items:
+            line_items = []
+            for li in db_items:
+                item = {
+                    'name': li.item_name,
+                    'description': li.item_name,
+                    'rate': float(li.rate),
+                    'quantity': float(li.qty_value),
+                    'unit': li.qty_unit,
+                }
+                if sales_account_id:
+                    item['account_id'] = sales_account_id
+                line_items.append(item)
+        else:
+            subtotal = float(inv.total_amount or 0)
+            cgst = float(inv.cgst or 0)
+            sgst = float(inv.sgst or 0)
+            taxable = subtotal - cgst - sgst if subtotal > (cgst + sgst) else subtotal
+            item = {
+                'description': f'Invoice {inv.invoice_number}',
+                'rate': taxable,
+                'quantity': 1,
+            }
+            if sales_account_id:
+                item['account_id'] = sales_account_id
+            line_items = [item]
+ 
         payload = {
             'customer_id': customer_id,
             'invoice_number': inv.invoice_number,
             'date': str(inv.invoice_date) if inv.invoice_date else '',
             'line_items': line_items,
         }
-
-        resp = _zoho_post(url, payload, config)
+ 
+        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/invoices?organization_id={org}", payload, config)
         if resp.status_code in (200, 201):
-            zoho_invoice_id = resp.json().get('invoice', {}).get('invoice_id', '')
-            inv.zoho_id = zoho_invoice_id
+            inv.zoho_id = resp.json().get('invoice', {}).get('invoice_id', '')
             inv.zoho_migrated_at = timezone.now()
             inv.save(update_fields=['zoho_id', 'zoho_migrated_at'])
             success += 1
         else:
             failed += 1
-            print(f"[Invoice] Failed: {inv.invoice_number} → {resp.text}")
-
+            error_msg = resp.json().get('message', resp.text[:200])
+            print(f"[Invoice] Failed: {inv.invoice_number} | Customer: {inv.customer_name} | Reason: {error_msg}")
+ 
     results['invoices'] = {'success': success, 'failed': failed, 'skipped': skipped}
-
+    print(f"{'='*50}")
+    print(f"✅ INVOICES pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+ 
 
 def _push_receipts(config, results):
-    """
-    Push receipts to Zoho Books as customer payments.
-    Skips records already migrated (zoho_id set).
-    """
     org = config.organization_id
     url = f"{ZOHO_BOOKS_BASE}/customerpayments?organization_id={org}"
     success, failed, skipped = 0, 0, 0
@@ -985,7 +1534,10 @@ def _push_receipts(config, results):
             continue
 
         raw_mode = (rec.payment_mode or '').lower()
-        zoho_mode = PAYMENT_MODE_MAP.get(raw_mode, 'cash')
+        zoho_mode = next(
+            (v for k, v in PAYMENT_MODE_MAP.items() if k in raw_mode),
+            'cash'
+        )
 
         payload = {
             'customer_id': customer_id,
@@ -996,18 +1548,459 @@ def _push_receipts(config, results):
         }
 
         resp = _zoho_post(url, payload, config)
+
         if resp.status_code in (200, 201):
             zoho_payment_id = resp.json().get('payment', {}).get('payment_id', '')
-            rec.zoho_id = zoho_payment_id
-            rec.zoho_migrated_at = timezone.now()
-            rec.save(update_fields=['zoho_id', 'zoho_migrated_at'])
+            rec.mark_migrated(zoho_payment_id)
             success += 1
         else:
             failed += 1
-            print(f"[Receipt] Failed: {rec.receipt_number} → {resp.text}")
+            error_msg = resp.json().get('message', resp.text[:200])
+            print(f"[Receipt] Failed: {rec.receipt_number} | Customer: {rec.customer_name} | Reason: {error_msg}")
 
     results['receipts'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ RECEIPTS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
 
+
+def _push_bills(config, results):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    # Get a purchase/expense account to attach to line items
+    purchase_account_id = None
+
+    # Try cost_of_goods_sold first, then expense
+    for acct_type in ['cost_of_goods_sold', 'expense']:
+        acct_resp = _zoho_get(
+            f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={acct_type}",
+            config
+        )
+        if acct_resp.status_code == 200:
+            accounts = acct_resp.json().get('chartofaccounts', [])
+            if accounts:
+                purchase_account_id = accounts[0]['account_id']
+                break
+
+    for b in Purchase.objects.all():
+        if b.zoho_id:
+            skipped += 1
+            continue
+
+        vendor_id = _resolve_vendor_id(b.vendor_name, config)
+        if not vendor_id:
+            failed += 1
+            print(f"[Bill] No vendor found for: {b.vendor_name}")
+            continue
+
+        line_item = {
+            'description': f'Bill {b.bill_number}',
+            'rate': float(b.amount or 0),
+            'quantity': 1,
+        }
+        if purchase_account_id:
+            line_item['account_id'] = purchase_account_id
+
+        payload = {
+            'vendor_id': vendor_id,
+            'bill_number': str(b.bill_number) if b.bill_number else '',
+            'date': str(b.bill_date) if b.bill_date else '',
+            'line_items': [line_item],
+        }
+
+        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/bills?organization_id={org}", payload, config)
+        if resp.status_code in (200, 201):
+            b.mark_migrated(resp.json().get('bill', {}).get('bill_id', ''))
+            success += 1
+        else:
+            failed += 1
+            print(f"[Bill] Failed: {b.bill_number} → {resp.text}")
+
+    results['bills'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ BILLS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+def _push_payments(config, results):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+    import time
+    print(f"[Payment] Starting push, total records: {Payment.objects.count()}")
+
+    for p in Payment.objects.all():
+        if p.zoho_id:
+            skipped += 1
+            continue
+
+        # Skip bank/cash accounts misclassified as vendor payments
+        skip_keywords = ['bank', 'cash', 'city union', 'hdfc', 'sbi', 'icici', 'axis', 'canara', 'kotak']
+        if any(k in (p.vendor_name or '').lower() for k in skip_keywords):
+            print(f"[Payment] Skipping bank/cash entry: {p.vendor_name}")
+            skipped += 1
+            continue
+
+        vendor_id = _find_existing_contact(p.vendor_name, 'vendor', config)
+        if not vendor_id:
+            failed += 1
+            print(f"[Payment] No vendor found for: {p.vendor_name}")
+            continue
+
+        payload = {
+            'vendor_id': vendor_id,
+            'payment_mode': 'cash',
+            'amount': float(p.amount or 0),
+            'date': str(p.payment_date) if p.payment_date else '',
+            'reference_number': p.payment_number,
+        }
+
+        resp = _zoho_post(
+            f"{ZOHO_BOOKS_BASE}/vendorpayments?organization_id={org}",
+            payload, config
+        )
+        if resp.status_code in (200, 201):
+            resp_data = resp.json()
+            payment_id = (
+                resp_data.get('vendorpayment', {}).get('payment_id') or
+                resp_data.get('payment', {}).get('payment_id') or
+                ''
+            )
+            Payment.objects.filter(pk=p.pk).update(
+                zoho_id=payment_id,
+                zoho_migrated_at=timezone.now()
+            )
+            success += 1
+        else:
+            failed += 1
+            print(f"[Payment] Failed: {p.payment_number} → {resp.text[:200]}")
+
+        time.sleep(0.7)  # Stay under Zoho's 100 calls/min rate limit
+
+    results['payments'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ PAYMENTS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+def _push_credit_notes(config, results):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    for c in CreditNote.objects.all():
+        if c.zoho_id:
+            skipped += 1
+            continue
+
+        customer_id = _resolve_customer_id(c.customer_name, config)
+        if not customer_id:
+            failed += 1
+            continue
+
+        payload = {
+            'customer_id': customer_id,
+            'date': str(c.credit_note_date) if c.credit_note_date else '',
+            'line_items': [{'description': f'Credit Note {c.credit_note_number}', 'rate': float(c.amount or 0), 'quantity': 1}],
+        }
+        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/creditnotes?organization_id={org}", payload, config)
+        if resp.status_code in (200, 201):
+            c.mark_migrated(resp.json().get('creditnote', {}).get('creditnote_id', ''))
+            success += 1
+        else:
+            failed += 1
+            print(f"[CreditNote] Failed: {c.credit_note_number} → {resp.text}")
+
+    results['credit_notes'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ CREDIT NOTES pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+
+def _push_vendor_credits(config, results):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type=expense", config)
+    fallback_account_id = ''
+    if acct_resp.status_code == 200:
+        accounts = acct_resp.json().get('chartofaccounts', [])
+        if accounts:
+            fallback_account_id = accounts[0]['account_id']
+
+    for v in VendorCredit.objects.all():
+        if v.zoho_id:
+            skipped += 1
+            continue
+
+        vendor_id = _resolve_vendor_id(v.vendor_name, config)
+        if not vendor_id:
+            failed += 1
+            print(f"[VendorCredit] No vendor found for: {v.vendor_name}")
+            continue
+
+        payload = {
+            'vendor_id': vendor_id,
+            'vendor_credit_number': str(v.vendor_credit_number) if v.vendor_credit_number else '',
+            'date': str(v.vendor_credit_date) if v.vendor_credit_date else '',
+            'line_items': [{
+                'account_id': fallback_account_id,
+                'description': f'Vendor Credit {v.vendor_credit_number}',
+                'rate': float(v.amount or 0),
+                'quantity': 1
+            }],
+        }
+        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/vendorcredits?organization_id={org}", payload, config)
+        if resp.status_code in (200, 201):
+            v.mark_migrated(resp.json().get('vendor_credit', {}).get('vendor_credit_id', ''))
+            success += 1
+        else:
+            failed += 1
+            print(f"[VendorCredit] Failed: {v.vendor_credit_number} → {resp.text}")
+
+    results['vendor_credits'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ VENDOR CREDITS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+
+def _push_journals(config, results):
+    """
+    FIX 4: Use actual Tally account names (stored in narration as JSON)
+    to correctly map debit/credit legs in Zoho instead of using a fake
+    fallback expense account for both sides.
+    """
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    # FIX 5: Build account map once for all journals
+    account_map = _build_zoho_account_map(config)
+
+    # Fallback for accounts not found in map
+    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type=expense", config)
+    fallback_account_id = ''
+    if acct_resp.status_code == 200:
+        accts = acct_resp.json().get('chartofaccounts', [])
+        if accts:
+            fallback_account_id = accts[0]['account_id']
+
+    for j in Journal.objects.all():
+        if j.zoho_id:
+            skipped += 1
+            continue
+
+        # FIX 4: Extract actual journal lines from stored narration
+        journal_lines = []
+        narration_text = j.narration or ''
+        if '__lines__' in narration_text:
+            parts = narration_text.split('__lines__', 1)
+            narration_text = parts[0]
+            try:
+                stored_lines = json.loads(parts[1])
+                for line in stored_lines:
+                    acct_name = line.get('account_name', '').strip()
+                    acct_id = account_map.get(acct_name.lower(), fallback_account_id)
+                    debit = float(line.get('debit', 0) or 0)
+                    credit = float(line.get('credit', 0) or 0)
+                    if debit > 0:
+                        journal_lines.append({
+                            'account_id': acct_id,
+                            'description': acct_name,
+                            'debit_or_credit': 'debit',
+                            'amount': debit,
+                        })
+                    elif credit > 0:
+                        journal_lines.append({
+                            'account_id': acct_id,
+                            'description': acct_name,
+                            'debit_or_credit': 'credit',
+                            'amount': credit,
+                        })
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"[Journal] Could not parse lines for {j.voucher_number}: {e}")
+
+        # Fallback if no lines parsed
+        if not journal_lines:
+            amt = float(j.amount or 0)
+            journal_lines = [
+                {'account_id': fallback_account_id, 'description': f'Journal {j.voucher_number}', 'debit_or_credit': 'debit', 'amount': amt},
+                {'account_id': fallback_account_id, 'description': f'Journal {j.voucher_number}', 'debit_or_credit': 'credit', 'amount': amt},
+            ]
+
+        payload = {
+            'journal_date': str(j.voucher_date) if j.voucher_date else '',
+            'notes': narration_text,
+            'line_items': journal_lines,
+        }
+
+        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/journals?organization_id={org}", payload, config)
+        if resp.status_code in (200, 201):
+            j.mark_migrated(resp.json().get('journal', {}).get('journal_id', ''))
+            success += 1
+        else:
+            failed += 1
+            print(f"[Journal] Failed: {j.voucher_number} → {resp.text}")
+
+    results['journals'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ JOURNALS pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+
+def _push_opening_balances(config, results):
+    """
+    FIX: Use the correct Zoho API endpoint for opening balances:
+    PUT /settings/openingbalances with an accounts array.
+    Previous code incorrectly used PUT on /chartofaccounts/{id}.
+    """
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    unpushed = OpeningBalance.objects.filter(is_pushed=False)
+    if not unpushed.exists():
+        results['opening_balances'] = {'success': 0, 'failed': 0, 'skipped': OpeningBalance.objects.count()}
+        return
+
+    # Fetch all Zoho accounts to match by name
+    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", config)
+    if acct_resp.status_code != 200:
+        results['opening_balances'] = {'success': 0, 'failed': unpushed.count(), 'skipped': 0}
+        print(f"[OB] Could not fetch Zoho chart of accounts: {acct_resp.text}")
+        return
+
+    zoho_accounts = {
+        a['account_name'].strip().lower(): a['account_id']
+        for a in acct_resp.json().get('chartofaccounts', [])
+    }
+
+    # Build the accounts payload — one PUT call for all opening balances
+    accounts_payload = []
+    ob_records = []
+
+    for ob in unpushed:
+        zoho_account_id = zoho_accounts.get(ob.ledger_name.strip().lower())
+        if not zoho_account_id:
+            skipped += 1
+            print(f"[OB] No Zoho account matched for: {ob.ledger_name}")
+            continue
+
+        accounts_payload.append({
+            'account_id': zoho_account_id,
+            'debit_or_credit': ob.balance_type,  # 'debit' or 'credit'
+            'amount': ob.opening_balance,
+        })
+        ob_records.append((ob, zoho_account_id))
+
+    if not accounts_payload:
+        results['opening_balances'] = {'success': 0, 'failed': 0, 'skipped': skipped}
+        return
+
+    # Single PUT call with all accounts
+    url = f"{ZOHO_BOOKS_BASE}/settings/openingbalances?organization_id={org}"
+    payload = {'accounts': accounts_payload}
+    resp = _zoho_put(url, payload, config)
+
+    if resp.status_code in (200, 201):
+        # Mark all as pushed
+        for ob, zoho_account_id in ob_records:
+            ob.zoho_account_id = zoho_account_id
+            ob.is_pushed = True
+            ob.save(update_fields=['zoho_account_id', 'is_pushed', 'synced_at'])
+        success = len(ob_records)
+        print(f"[OB] Successfully pushed {success} opening balances")
+    else:
+        failed = len(ob_records)
+        print(f"[OB] Failed to push opening balances: {resp.text}")
+
+    results['opening_balances'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ OPENING BALANCES pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
+
+
+
+def _push_expenses(config, results, account_map=None):
+    org = config.organization_id
+    success, failed, skipped = 0, 0, 0
+
+    if account_map is None:
+        account_map = _build_zoho_account_map(config)
+
+    # Get a valid default expense account from Zoho
+    # Replace this block at the top of _push_expenses:
+default_expense_id = None
+for acct_type in ['expense', 'other_expense', 'cost_of_goods_sold']:
+    r = _zoho_get(
+        f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={acct_type}",
+        config
+    )
+    if r.status_code == 200:
+        accts = r.json().get('chartofaccounts', [])
+        # Filter out asset-type accounts — only use real expense accounts
+        expense_accts = [a for a in accts if 'prepaid' not in a.get('account_name','').lower()]
+        if expense_accts:
+            default_expense_id = expense_accts[0]['account_id']
+            print(f"[Expense] Default expense account: {expense_accts[0]['account_name']} → {default_expense_id}")
+            break
+
+default_paid_through_id = None
+for acct_type in ['cash', 'bank']:
+    r = _zoho_get(
+        f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={acct_type}",
+        config
+    )
+    if r.status_code == 200:
+        accts = r.json().get('chartofaccounts', [])
+        if accts:
+            default_paid_through_id = accts[0]['account_id']
+            print(f"[Expense] Default paid_through: {accts[0]['account_name']} → {default_paid_through_id}")
+            break
+
+    for exp in Expense.objects.all():
+        if exp.zoho_id:
+            skipped += 1
+            continue
+
+        # Try to find a proper expense-type account by name first
+        account_id = account_map.get(exp.account_name.strip().lower())
+
+        # Validate it's actually an expense-type account
+        # If not found or wrong type, use default expense account
+        if not account_id:
+            account_id = default_expense_id
+
+        if not account_id:
+            failed += 1
+            print(f"[Expense] No expense account found for: {exp.account_name}")
+            continue
+
+        # paid_through: try cash/bank account by name, else use default
+        paid_through_id = account_map.get(exp.paid_through.strip().lower())
+        if not paid_through_id:
+            paid_through_id = default_paid_through_id
+
+        payload = {
+            'account_id': account_id,
+            'date': str(exp.payment_date) if exp.payment_date else '',
+            'amount': float(exp.amount or 0),
+            'description': exp.narration or exp.account_name,
+            'reference_number': str(exp.payment_number),
+            'is_billable': False,
+        }
+        if paid_through_id:
+            payload['paid_through_account_id'] = paid_through_id
+
+        url = f"{ZOHO_BOOKS_BASE}/expenses?organization_id={org}"
+        resp = _zoho_post(url, payload, config)
+
+        if resp.status_code in (200, 201):
+            exp.mark_migrated(resp.json().get('expense', {}).get('expense_id', ''))
+            success += 1
+        else:
+            failed += 1
+            print(f"[Expense] Failed: {exp.payment_number} → {resp.json().get('message', resp.text[:100])}")
+
+    results['expenses'] = {'success': success, 'failed': failed, 'skipped': skipped}
+    print(f"{'='*50}")
+    print(f"✅ EXPENSES pushed → success: {success} | failed: {failed} | skipped: {skipped}")
+    print(f"{'='*50}")
 
 @csrf_exempt
 def push_to_zoho(request):
@@ -1029,47 +2022,586 @@ def push_to_zoho(request):
         except json.JSONDecodeError:
             body = {}
 
-        push_types = body.get('types', ['customers', 'vendors', 'accounts', 'items', 'invoices', 'receipts'])
+        push_types = body.get('types', [
+            'customers', 'vendors', 'accounts', 'items', 'taxes',
+            'invoices', 'receipts', 'bills', 'payments',
+            'credit_notes', 'vendor_credits', 'journals', 'opening_balances',
+            'expenses'
+        ])
 
-        results = {}
-        errors = []
+        def run_push():
+            results = {}
+            errors = []
+            for push_type, push_fn in [
+                ('customers', _push_customers),
+                ('vendors', _push_vendors),
+                ('accounts', _push_accounts),
+                ('items', _push_items),
+                ('taxes', _push_taxes),
+                ('invoices', _push_invoices),
+                ('receipts', _push_receipts),
+                ('bills', _push_bills),
+                ('payments', _push_payments),
+                ('credit_notes', _push_credit_notes),
+                ('vendor_credits', _push_vendor_credits),
+                ('journals', _push_journals),
+                ('opening_balances', _push_opening_balances),
+                ('expenses', _push_expenses),
+            ]:
+                if push_type in push_types:
+                    try:
+                        push_fn(config, results)
+                    except Exception as e:
+                        errors.append(f"{push_type}: {str(e)}")
+                        print(f"[Push] Error in {push_type}: {e}")
 
-        for push_type, push_fn in [
-            ('customers', _push_customers),
-            ('vendors', _push_vendors),
-            ('accounts', _push_accounts),
-            ('items', _push_items),
-            ('invoices', _push_invoices),
-            ('receipts', _push_receipts),
-        ]:
-            if push_type in push_types:
-                try:
-                    push_fn(config, results)
-                except Exception as e:
-                    errors.append(f"{push_type}: {str(e)}")
+            total_success = sum(v.get('success', 0) for v in results.values())
+            total_failed = sum(v.get('failed', 0) for v in results.values())
+            total_skipped = sum(v.get('skipped', 0) for v in results.values())
+            print(f"[Push] DONE → success: {total_success} | failed: {total_failed} | skipped: {total_skipped}")
 
-        total_success = sum(v.get('success', 0) for v in results.values())
-        total_failed = sum(v.get('failed', 0) for v in results.values())
-        total_skipped = sum(v.get('skipped', 0) for v in results.values())
+        thread = threading.Thread(target=run_push, daemon=True)
+        thread.start()
 
-        response_data = {
-            'message': 'Push to Zoho Books completed.',
-            'total_success': total_success,
-            'total_failed': total_failed,
-            'total_skipped': total_skipped,
-            'details': results,
-        }
-        if errors:
-            response_data['errors'] = errors
-
-        status_code = 200 if not errors and total_failed == 0 else 207
-        return JsonResponse(response_data, status=status_code)
+        return JsonResponse({
+            'message': 'Push started in background. Check server logs for progress.',
+            'status': 'running'
+        }, status=202)
 
     return JsonResponse({'error': 'Invalid request'}, status=400)
-
-
 # ---------------- MISC ----------------
+
+
+@csrf_exempt
+def migration_status_all(request):
+    """
+    Returns detailed migration status for every model.
+    Used by the dashboard to show accurate pushed/pending counts.
+    """
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+
+        def counts(model, use_is_pushed=False):
+            total = model.objects.count()
+            if use_is_pushed:
+                migrated = model.objects.filter(is_pushed=True).count()
+            else:
+                migrated = model.objects.filter(
+                    zoho_id__isnull=False
+                ).exclude(zoho_id='').exclude(zoho_id='None').count()
+            return {'total': total, 'migrated': migrated, 'pending': total - migrated}
+
+        data = {
+            'masters': {
+                'customers':  counts(Customer),
+                'vendors':    counts(Vendor),
+                'accounts':   counts(Account),
+                'items':      counts(Item),
+                'taxes':      counts(Tax),
+            },
+            'transactions': {
+                'invoices':        counts(Invoice),
+                'receipts':        counts(Receipt),
+                'bills':           counts(Purchase),
+                'payments':        counts(Payment),
+                'credit_notes':    counts(CreditNote),
+                'vendor_credits':  counts(VendorCredit),
+                'journals':        counts(Journal),
+                'expenses':        counts(Expense),
+                'opening_balances': counts(OpeningBalance, use_is_pushed=True),
+            },
+        }
+
+        # Totals
+        all_models = list(data['masters'].values()) + list(data['transactions'].values())
+        data['summary'] = {
+            'total':    sum(m['total']    for m in all_models),
+            'migrated': sum(m['migrated'] for m in all_models),
+            'pending':  sum(m['pending']  for m in all_models),
+        }
+
+        return JsonResponse(data, status=200)
+
+    return JsonResponse({'error': 'Invalid request'}, status=400)
 
 @csrf_exempt
 def get_next_task(request):
     return JsonResponse({'task': 'fetch_customers'})
+
+
+@csrf_exempt
+def receive_tax(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        taxes = data.get('taxes', [])
+
+        for t in taxes:
+            Tax.objects.update_or_create(
+                tax_name=t.get('tax_name', ''),
+                defaults={
+                    'tax_rate':    t.get('tax_rate', 0),
+                    'tax_type':    t.get('tax_type', ''),
+                    'ledger_name': t.get('ledger_name', ''),
+                    'parent':      None,
+                    'is_active':   t.get('is_active', True),
+                }
+            )
+
+        print(f"Received {len(taxes)} tax records")
+        return JsonResponse({'status': 'received', 'count': len(taxes)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def receive_opening_balances(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        data = json.loads(request.body)
+        balances = data.get('balances', [])
+
+        for b in balances:
+            OpeningBalance.objects.update_or_create(
+                ledger_name=b.get('ledger_name', ''),
+                defaults={
+                    'parent': b.get('parent', ''),
+                    'opening_balance': b.get('opening_balance', 0),
+                    'balance_type': b.get('balance_type', 'debit'),
+                    'is_pushed': False,  # Reset so it gets pushed on next push_to_zoho call
+                }
+            )
+        print(f"Saved {len(balances)} opening balances")
+        return JsonResponse({'status': 'received', 'count': len(balances)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+# --------------------------------DASHBOARD FUNCTIONS---------------------------------------------------
+@csrf_exempt
+def customer_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Customer.objects.count()
+        migrated = Customer.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_ledgers': list(Customer.objects.values(
+                'name', 'email', 'phone', 'state', 'pincode', 'country', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def vendor_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Vendor.objects.count()
+        migrated = Vendor.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_ledgers': list(Vendor.objects.values(
+                'name', 'email', 'phone', 'state', 'pincode', 'country', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def coa_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Account.objects.count()
+        migrated = Account.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_ledgers': list(Account.objects.values(
+                'account_name', 'account_code', 'account_type', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def items_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Item.objects.count()
+        migrated = Item.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_items': list(Item.objects.values(
+                'name', 'rate', 'description', 'sku',
+                'product_type', 'gst_rate', 'hsn_code', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def invoice_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Invoice.objects.count()
+        migrated = Invoice.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_invoices': list(Invoice.objects.values(
+                'invoice_number', 'customer_name', 'invoice_date', 'total_amount', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def receipt_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Receipt.objects.count()
+        migrated = Receipt.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_receipts': list(Receipt.objects.values(
+                'receipt_number', 'customer_name', 'receipt_date',
+                'amount', 'payment_mode', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def credit_note_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = CreditNote.objects.count()
+        migrated = CreditNote.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_credit_notes': list(CreditNote.objects.values(
+                'credit_note_number', 'customer_name', 'credit_note_date', 'amount', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def bill_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Purchase.objects.count()
+        migrated = Purchase.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_bills': list(Purchase.objects.values(
+                'bill_number', 'vendor_name', 'bill_date', 'amount', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def payment_made_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Payment.objects.count()
+        migrated = Payment.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_payments': list(Payment.objects.values(
+                'payment_number', 'vendor_name', 'payment_date',
+                'amount', 'payment_mode', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def vendor_credit_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = VendorCredit.objects.count()
+        migrated = VendorCredit.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_vendor_credits': list(VendorCredit.objects.values(
+                'vendor_credit_number', 'vendor_name', 'vendor_credit_date', 'amount', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def expense_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Expense.objects.count()
+        migrated = Expense.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_expenses': list(Expense.objects.values(
+                'payment_number', 'payment_date', 'account_name',
+                'paid_through', 'amount', 'narration', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def journal_dashboard(request):
+    if request.method == 'GET':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        total = Journal.objects.count()
+        migrated = Journal.objects.filter(zoho_id__isnull=False).exclude(zoho_id='').count()
+        return JsonResponse({
+            'summary': {
+                'fetched_from_tally': total,
+                'pushed_to_zoho': migrated,
+                'pending_to_push_to_zoho': total - migrated
+            },
+            'all_journals': list(Journal.objects.values(
+                'voucher_number', 'voucher_date', 'narration', 'amount', 'zoho_id'
+            ).annotate(pushed_to_zoho=models.Case(
+                models.When(zoho_id__isnull=False, then=True),
+                default=False,
+                output_field=models.BooleanField()
+            ))
+        )})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+# ------------------------------SETTINGS FUNCTIONS-----------------------------------
+
+@csrf_exempt
+def get_zoho_connection_status(request):
+    if request.method == 'GET':
+        try:
+            payload = verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        user_email = payload.get('email')
+        try:
+            config = ZohoConfig.objects.get(user_email=user_email)
+            # Test if token still works
+            resp = req.get(
+                f"{ZOHO_BOOKS_BASE}/organizations",
+                headers={'Authorization': f'Zoho-oauthtoken {config.access_token}'}
+            )
+            if resp.status_code == 401:
+                _refresh_zoho_token(config)
+                status = 'connected'
+            else:
+                status = 'connected' if resp.status_code == 200 else 'error'
+            return JsonResponse({
+                'status': status,
+                'organization_id': config.organization_id,
+                'client_id': config.client_id,
+            })
+        except ZohoConfig.DoesNotExist:
+            return JsonResponse({'status': 'not_connected'})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def test_tally_connection(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        host = data.get('host', 'localhost')
+        port = data.get('port', 9000)
+        try:
+            resp = req.post(
+                f"http://{host}:{port}",
+                data="<ENVELOPE><HEADER><TALLYREQUEST>Export</TALLYREQUEST></HEADER></ENVELOPE>",
+                timeout=5
+            )
+            return JsonResponse({'status': 'connected', 'message': 'Tally is reachable'})
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=200)
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def change_password(request):
+    if request.method == 'POST':
+        try:
+            payload = verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        if not current_password or not new_password:
+            return JsonResponse({'error': 'Both passwords required'}, status=400)
+        user = AppUser.objects.get(email=payload.get('email'))
+        if not bcrypt.checkpw(current_password.encode('utf-8'), user.password.encode('utf-8')):
+            return JsonResponse({'error': 'Current password is incorrect'}, status=400)
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        user.password = hashed.decode('utf-8')
+        user.save()
+        return JsonResponse({'message': 'Password changed successfully'})
+    return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def clear_migration_data(request):
+    if request.method == 'POST':
+        try:
+            verify_token(request)
+        except ValueError as e:
+            return JsonResponse({'error': str(e)}, status=401)
+        # Reset all zoho_id fields so everything can be re-migrated
+        Invoice.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Receipt.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Purchase.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Payment.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        CreditNote.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        VendorCredit.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Journal.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Expense.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Account.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        Item.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        OpeningBalance.objects.all().update(is_pushed=False, zoho_account_id=None)
+        Customer.objects.all().update(zoho_id=None)
+        Vendor.objects.all().update(zoho_id=None)
+        return JsonResponse({'message': 'All migration data cleared. You can re-sync now.'})
+    return JsonResponse({'error': 'Invalid request'}, status=400)

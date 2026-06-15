@@ -259,54 +259,54 @@ function Sidebar() {
                     Payment Received
                   </Link>
                   <Link
-                    to="/transactions/credit-notes"
+                    to="/credit-notes"
                     className={`dropdown-item ${
-                      pathname === "/transactions/credit-notes" ? "active" : ""
+                      pathname === "/credit-notes" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >
                     Credit Notes
                   </Link>
                   <Link
-                    to="/transactions/bills"
+                    to="/bills"
                     className={`dropdown-item ${
-                      pathname === "/transactions/bills" ? "active" : ""
+                      pathname === "/bills" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >
                     Bills
                   </Link>
                   <Link
-                    to="/transactions/payment-made"
+                    to="/payment-made"
                     className={`dropdown-item ${
-                      pathname === "/transactions/payment-made" ? "active" : ""
+                      pathname === "/payment-made" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >
                     Payment Made
                   </Link>
                   <Link
-                    to="/transactions/vendor-credit"
+                    to="/vendor-credit"
                     className={`dropdown-item ${
-                      pathname === "/transactions/vendor-credit" ? "active" : ""
+                      pathname === "/vendor-credit" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >
                     Vendor Credit
                   </Link>
                   <Link
-                    to="/transactions/expenses"
+                    to="/expenses"
                     className={`dropdown-item ${
-                      pathname === "/transactions/expenses" ? "active" : ""
+                      pathname === "/expenses" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >
                     Expenses
                   </Link>
                   <Link
-                    to="/transactions/manual-journals"
+                    to="/manual-journals"
                     className={`dropdown-item ${
-                      pathname === "/transactions/manual-journals" ? "active" : ""
+                      pathname === "/manual-journals" ? "active" : ""
                     }`}
                     onClick={closeMobileMenu}
                   >

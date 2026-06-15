@@ -18,6 +18,7 @@ function QuickMigration() {
     total: 0,
   });
   const [syncStatus, setSyncStatus] = useState("Ready to sync");
+  const [syncDetails, setSyncDetails] = useState(null); // ← new: per-type results
 
   const [tallyData, setTallyData] = useState({
     masters: { migrated: 0, pending: 0, total: 0, loading: true },
@@ -79,7 +80,7 @@ function QuickMigration() {
         masters: {
           migrated: data.migrated || 0,
           pending: data.pending || 0,
-          total: data.total || data.vendors || data.accounts || data.ledgers || 0,
+          total: data.total || 0,
           loading: false,
         },
         transactions: {
@@ -111,66 +112,82 @@ function QuickMigration() {
   // -------------------- SYNC NOW --------------------
 
   const handleSyncNow = async () => {
-    try {
-      setIsSync(true);
-      setProgress(0);
-      setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
-      setSyncStatus("Preparing sync from Tally to Zoho Books...");
-      hideSnackbarAlert();
+  try {
+    setIsSync(true);
+    setProgress(10);
+    setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
+    setSyncDetails(null);
+    setSyncStatus("Pushing data to Zoho Books in background...");
+    hideSnackbarAlert();
 
-      const authToken = localStorage.getItem("authToken");
-      if (!authToken) {
-        throw new Error("Authentication token not found. Please login again.");
-      }
-
-      const syncResponse = await fetch("http://127.0.0.1:8000/api/push-to-zoho/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          masters: tallyData.masters,
-          transactions: tallyData.transactions,
-          syncType: "full",
-        }),
-      });
-
-      if (!syncResponse.ok) {
-        throw new Error(`Failed: ${syncResponse.status} ${syncResponse.statusText}`);
-      }
-
-      const syncResult = await syncResponse.json();
-
-      // Simulate progress steps
-      setSyncStatus("Syncing masters...");
-      setProgress(40);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      setSyncStatus("Syncing transactions...");
-      setProgress(80);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      setProgress(100);
-      setSyncedRecords({
-        masters: tallyData.masters.total,
-        transactions: tallyData.transactions.total,
-        total: tallyData.masters.total + tallyData.transactions.total,
-      });
-
-      setSyncStatus(syncResult.message || "Sync completed successfully!");
-      showSnackbarAlert("success", syncResult.message || "Sync completed successfully!");
-      fetchTallyData();
-    } catch (error) {
-      console.error("Error during sync:", error);
-      showSnackbarAlert("error", `Failed to sync:\n${error.message}`);
-      setSyncStatus("Sync failed. Please try again.");
-      setProgress(0);
-      setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
-    } finally {
-      setIsSync(false);
+    const authToken = localStorage.getItem("authToken");
+    if (!authToken) {
+      throw new Error("Authentication token not found. Please login again.");
     }
-  };
+
+    const syncResponse = await fetch("http://127.0.0.1:8000/api/push-to-zoho/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        types: ["customers", "vendors", "accounts", "items", "taxes", "invoices", "receipts", "bills", "payments", "credit_notes", "vendor_credits", "journals", "expenses"],
+      }),
+    });
+
+    const rawText = await syncResponse.text();
+    let syncResult;
+    try {
+      syncResult = JSON.parse(rawText);
+    } catch {
+      throw new Error(`Server returned unexpected response: ${rawText}`);
+    }
+
+    if (!syncResponse.ok && syncResponse.status !== 202) {
+      const djangoError = syncResult?.error || syncResult?.message || `HTTP ${syncResponse.status}`;
+      throw new Error(djangoError);
+    }
+
+    // Background push started — animate progress and poll for updates
+    setProgress(30);
+    setSyncStatus("Sync running in background... Records will update automatically.");
+    showSnackbarAlert("success", "✅ Sync started! Data is being pushed to Zoho Books. This may take 15–20 minutes. The counts below will refresh every 30 seconds.");
+
+    // Animate progress bar slowly to show activity
+    let fakeProgress = 30;
+    const progressInterval = setInterval(() => {
+      fakeProgress = Math.min(fakeProgress + 2, 90);
+      setProgress(fakeProgress);
+    }, 3000);
+
+    // Poll every 30s to update migrated counts
+    let pollCount = 0;
+    const pollInterval = setInterval(async () => {
+      await fetchTallyData();
+      pollCount++;
+      if (pollCount >= 40) { // Stop after 20 minutes
+        clearInterval(pollInterval);
+        clearInterval(progressInterval);
+        setProgress(100);
+        setSyncStatus("Sync completed! Check the counts above.");
+        setIsSync(false);
+      }
+    }, 30000);
+
+    // Store intervals so we don't block the UI
+    setSyncStatus("Sync running in background — check server logs for live progress.");
+
+  } catch (error) {
+    console.error("Error during sync:", error);
+    showSnackbarAlert("error", `Failed to sync: ${error.message}`);
+    setSyncStatus(`Sync failed: ${error.message}`);
+    setProgress(0);
+    setIsSync(false);
+  }
+  // Note: setIsSync(false) NOT in finally — we want button to stay "Syncing..."
+  // until poll detects completion or timeout
+};
 
   // -------------------- RENDER --------------------
 
@@ -206,10 +223,10 @@ function QuickMigration() {
                   {snackbarAlert.type === "error"
                     ? "❌"
                     : snackbarAlert.type === "success"
-                    ? "✅"
-                    : snackbarAlert.type === "warning"
-                    ? "⚠️"
-                    : "ℹ️"}
+                      ? "✅"
+                      : snackbarAlert.type === "warning"
+                        ? "⚠️"
+                        : "ℹ️"}
                 </div>
                 <div className="snackbar-message">
                   {snackbarAlert.message.split("\n").map((line, index) => (
@@ -238,19 +255,19 @@ function QuickMigration() {
                 </h3>
                 <div style={{ marginTop: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "14px", color: "#718096" }}>Migrated Data in the Masters Field.</span>
+                    <span style={{ fontSize: "14px", color: "#718096" }}>Migrated</span>
                     <span style={{ fontWeight: "600" }}>
                       {tallyData.masters.loading ? "Loading..." : tallyData.masters.migrated.toLocaleString()}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "14px", color: "#718096" }}>Pending records in the Masters Field.</span>
+                    <span style={{ fontSize: "14px", color: "#718096" }}>Pending</span>
                     <span style={{ fontWeight: "600" }}>
                       {tallyData.masters.loading ? "Loading..." : tallyData.masters.pending.toLocaleString()}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: "14px", color: "#718096" }}>Total Records in the Masters Field.</span>
+                    <span style={{ fontSize: "14px", color: "#718096" }}>Total Records</span>
                     <span style={{ fontWeight: "600", background: "#ffeb3b", padding: "2px 4px" }}>
                       {tallyData.masters.loading ? "Loading..." : tallyData.masters.total.toLocaleString()}
                     </span>
@@ -270,13 +287,13 @@ function QuickMigration() {
                 </h3>
                 <div style={{ marginTop: "16px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "14px", color: "#718096" }}>Migrated Data in the Transaction field.</span>
+                    <span style={{ fontSize: "14px", color: "#718096" }}>Migrated</span>
                     <span style={{ fontWeight: "600" }}>
                       {tallyData.transactions.loading ? "Loading..." : tallyData.transactions.migrated.toLocaleString()}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                    <span style={{ fontSize: "14px", color: "#718096" }}>Pending records in Transaction field</span>
+                    <span style={{ fontSize: "14px", color: "#718096" }}>Pending</span>
                     <span style={{ fontWeight: "600" }}>
                       {tallyData.transactions.loading ? "Loading..." : tallyData.transactions.pending.toLocaleString()}
                     </span>
@@ -298,8 +315,10 @@ function QuickMigration() {
                   Sync Your Data in One Place
                 </h3>
                 <p>
-                  The sync process transfers Tally data to Zoho Books and keeps
-                  master data updated across both systems.
+                  Pushes all Tally data — customers, vendors, accounts, items,
+                  invoices, receipts, bills, payments, credit notes, vendor
+                  credits and journals — into Zoho Books. Already-synced
+                  records are skipped automatically.
                 </p>
               </div>
               <div className="sync-button-container">
@@ -324,7 +343,7 @@ function QuickMigration() {
               <h2 className="status-title">Current Status</h2>
               <div className="status-info-progress">
                 <p className="status-description">
-                  Combined Records -{" "}
+                  Combined Records —{" "}
                   {getTotalSyncedRecords().toLocaleString()} of{" "}
                   {getTotalRecords().toLocaleString()} synced
                   <br />
@@ -352,6 +371,32 @@ function QuickMigration() {
                 </div>
 
                 <div className="sync-status-text">{syncStatus}</div>
+
+                {/* Per-type breakdown table shown after sync */}
+                {syncDetails && (
+                  <div style={{ marginTop: "16px", overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+                      <thead>
+                        <tr style={{ background: "#f7f7f7" }}>
+                          <th style={{ padding: "6px 10px", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>Type</th>
+                          <th style={{ padding: "6px 10px", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>✅ Pushed</th>
+                          <th style={{ padding: "6px 10px", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>⏭ Skipped</th>
+                          <th style={{ padding: "6px 10px", textAlign: "center", borderBottom: "1px solid #e2e8f0" }}>❌ Failed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(syncDetails).map(([type, counts]) => (
+                          <tr key={type} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                            <td style={{ padding: "6px 10px", textTransform: "capitalize" }}>{type}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "center", color: "#38a169" }}>{counts.success ?? 0}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "center", color: "#718096" }}>{counts.skipped ?? 0}</td>
+                            <td style={{ padding: "6px 10px", textAlign: "center", color: counts.failed > 0 ? "#e53e3e" : "#718096" }}>{counts.failed ?? 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           </div>

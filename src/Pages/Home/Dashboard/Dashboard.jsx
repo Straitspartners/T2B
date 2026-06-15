@@ -49,7 +49,7 @@ const Dashboard = () => {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Token ${authToken}`
+          'Authorization': `Bearer ${authToken}`  // hits localhost Django
         }
       });
 

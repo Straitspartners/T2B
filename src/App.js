@@ -1,6 +1,7 @@
 import './App.css';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Signin from './Auth/Signin';
+import Signup from './Auth/Signup';
 import Nav from './components/Nav/Navigation';
 import Herosection from './Pages/Home/HeroSection/HeroSection';
 import Services from './Pages/Home/Services/Services';
@@ -10,24 +11,34 @@ import Contact from './Pages/Home/Contact/Contact';
 import Faq from './Pages/Home/FAQ/FAQ';
 import Footer from './Pages/Home/Footer/Footer';
 import Setup from './Pages/Home/Setup/Setup';
+import Sidebar from './components/Sidebar';
+
+// Dashboard pages
 import Dashboard from './Pages/Home/Dashboard/Dashboard';
 import Masters from './Pages/Home/Dashboard/Masters';
 import Transactions from './Pages/Home/Dashboard/Transactions';
-import Help from './Pages/Home/Dashboard/Help';       
-import ContactSupport from './Pages/Home/Dashboard/ContactSupport'; 
+import Help from './Pages/Home/Dashboard/Help';
+import ContactSupport from './Pages/Home/Dashboard/ContactSupport';
 import Settings from './Pages/Home/Dashboard/Settings';
-import Upgrade from './Pages/Home/Dashboard/Upgrade'; // Assuming Upgrade is a page similar to Help and ContactSupport
-import QuickMigration from './Pages/Home/Dashboard/QuickMigration'; // Importing the QuickMigration component
-import Customers from './Pages/Home/Dashboard/Customers'; // Importing the Customers component
-import Vendors from './Pages/Home/Dashboard/Vendors'; // Importing the Vendors component
-import Chartofaccounts from './Pages/Home/Dashboard/ChartofAC'; 
+import Upgrade from './Pages/Home/Dashboard/Upgrade';
+import QuickMigration from './Pages/Home/Dashboard/QuickMigration';
+
+// Masters sub-pages
+import Customers from './Pages/Home/Dashboard/Customers';
+import Vendors from './Pages/Home/Dashboard/Vendors';
+import Chartofaccounts from './Pages/Home/Dashboard/ChartofAC';
 import Items from './Pages/Home/Dashboard/Item';
+
+// Transaction sub-pages
 import Invoice from './Pages/Home/Dashboard/Invoice';
 import PaymentReceived from './Pages/Home/Dashboard/PaymentReceived';
-import Sidebar from './components/Sidebar';
-import Signup from './Auth/Signup';
+import CreditNotes from './Pages/Home/Dashboard/CreditNotes';
+import Bills from './Pages/Home/Dashboard/Bills';
+import PaymentMade from './Pages/Home/Dashboard/PaymentMade';
+import VendorCredit from './Pages/Home/Dashboard/VendorCredit';
+import Expenses from './Pages/Home/Dashboard/Expenses';
+import ManualJournals from './Pages/Home/Dashboard/ManualJournals';
 
-// Home page with Nav and Footer
 function HomePage() {
   return (
     <>
@@ -39,7 +50,6 @@ function HomePage() {
       <Contact />
       <Faq />
       <Footer />
-   
     </>
   );
 }
@@ -49,30 +59,43 @@ function App() {
     <div className="App">
       <Router>
         <Routes>
+          {/* Public */}
           <Route path="/" element={<HomePage />} />
           <Route path="/home" element={<HomePage />} />
           <Route path="/signin" element={<Signin />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/setup" element={<Setup />} />
 
+          {/* Dashboard shell */}
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/sidebar" element={<Sidebar  />} />
+          <Route path="/sidebar" element={<Sidebar />} />
+          <Route path="/quick-migration" element={<QuickMigration />} />
+
+          {/* Masters */}
           <Route path="/masters" element={<Masters />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/vendors" element={<Vendors />} />
+          <Route path="/chart-of-accounts" element={<Chartofaccounts />} />
+          <Route path="/items" element={<Items />} />
+
+          {/* Transactions */}
           <Route path="/transactions" element={<Transactions />} />
+          <Route path="/invoice" element={<Invoice />} />
+          <Route path="/payment-received" element={<PaymentReceived />} />
+          <Route path="/credit-notes" element={<CreditNotes />} />
+          <Route path="/bills" element={<Bills />} />
+          <Route path="/payment-made" element={<PaymentMade />} />
+          <Route path="/vendor-credit" element={<VendorCredit />} />
+          <Route path="/expenses" element={<Expenses />} />
+          <Route path="/manual-journals" element={<ManualJournals />} />
+
+          {/* Other */}
           <Route path="/settings" element={<Settings />} />
           <Route path="/help" element={<Help />} />
           <Route path="/contact" element={<ContactSupport />} />
           <Route path="/upgrade" element={<Upgrade />} />
-          <Route path="/quick-migration" element={<QuickMigration />} /> {/* Route for QuickMigration */}
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/vendors" element={<Vendors />} />
-          <Route path="/chart-of-accounts" element={<Chartofaccounts />} /> {/* Route for Chart of Accounts */}
-          <Route path="/items" element={<Items />} /> {/* Route for Items */}
-          <Route path="/invoice" element={<Invoice />} /> {/* Route for Invoice */}
-          <Route path="/payment-received" element={<PaymentReceived />} /> {/* Route for Payment Received */}
+
           <Route path="*" element={<Navigate to="/home" replace />} />
-          {/* Nested routes for Masters and Transactions */}
-          {/* Add more routes as needed */}
         </Routes>
       </Router>
     </div>

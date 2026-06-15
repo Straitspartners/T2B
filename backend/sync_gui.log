@@ -1,2 +1,159 @@
 2026-05-29 22:43:28,597:ERROR:Sync failed: No valid invoices to send.
 2026-05-29 22:51:04,972:ERROR:Sync failed: No valid invoices to send.
+2026-06-02 16:49:43,779:ERROR:Login failed: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/generate_token_agent/
+2026-06-02 16:51:17,945:ERROR:Login failed: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/generate_token_agent/
+2026-06-02 16:53:40,810:ERROR:Login failed: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/generate_token_agent/
+2026-06-02 16:57:09,072:ERROR:Login failed: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/generate_token_agent/
+2026-06-02 17:01:17,802:ERROR:Login failed: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/generate_token_agent/ (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-06-04 11:11:58,165:ERROR:Error sending customers to Django: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/users/ledgers/
+2026-06-04 11:11:58,165:ERROR:Sync failed: Failed to send customers data to server.
+2026-06-04 11:13:51,750:ERROR:Error sending customers to Django: 500 Server Error: Internal Server Error for url: http://localhost:8000/api/users/ledgers/
+2026-06-04 11:13:51,751:ERROR:Sync failed: Failed to send customers data to server.
+2026-06-04 11:16:46,582:ERROR:Error sending taxes to Django: 404 Client Error: Not Found for url: http://localhost:8000/api/users/taxes/
+2026-06-04 11:16:46,582:ERROR:Sync failed: Failed to send tax data to server.
+2026-06-04 15:19:58,163:ERROR:Sync failed: name 'sales_request' is not defined
+2026-06-04 16:05:38,383:ERROR:Login failed: 401 Client Error: Unauthorized for url: http://localhost:8000/api/generate_token_agent/
+2026-06-05 12:20:51,924:ERROR:Login failed: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/generate_token_agent/ (Caused by NewConnectionError("HTTPConnection(host='localhost', port=8000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-06-05 13:59:15,762:ERROR:Sync failed: reference to invalid character number: line 210, column 24
+2026-06-05 14:03:26,432:ERROR:Sync failed: reference to invalid character number: line 210, column 24
+2026-06-05 14:10:16,212:ERROR:Sync failed: reference to invalid character number: line 210, column 24
+2026-06-05 14:14:46,591:ERROR:Sync failed: cannot access local variable 'xml_data' where it is not associated with a value
+2026-06-08 12:06:09,010:ERROR:Traceback (most recent call last):
+  File "D:\tally-to-books\backend\python_agent.py", line 986, in sync_data
+    if expenses: send_expenses_to_django(expenses)
+                 ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "D:\tally-to-books\backend\python_agent.py", line 830, in send_expenses_to_django
+    _post(DJANGO_API_URL_EXPENSES, {"expenses": valid}, "expenses")
+          ^^^^^^^^^^^^^^^^^^^^^^^
+NameError: name 'DJANGO_API_URL_EXPENSES' is not defined. Did you mean: 'DJANGO_API_URL_VENDORS'?
+
+2026-06-08 16:29:29,529:WARNING:Skipping tax 'CGST' — rate is 0.0
+2026-06-08 16:29:29,530:WARNING:Skipping tax 'SGST' — rate is 0.0
+2026-06-08 17:08:44,135:WARNING:Skipping tax 'CGST' — rate is 0.0
+2026-06-08 17:08:44,135:WARNING:Skipping tax 'SGST' — rate is 0.0
+2026-06-08 17:27:21,990:WARNING:Skipping tax 'CGST' — rate is 0.0
+2026-06-08 17:27:21,990:WARNING:Skipping tax 'SGST' — rate is 0.0
+2026-06-09 10:46:40,441:ERROR:Login failed: 401 Client Error: Unauthorized for url: http://localhost:8000/api/generate_token_agent/
+2026-06-11 14:42:14,134:ERROR:Tally connection failed: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+2026-06-11 14:42:14,157:ERROR:Traceback (most recent call last):
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\util\connection.py", line 85, in create_connection
+    raise err
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\util\connection.py", line 73, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connectionpool.py", line 788, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connectionpool.py", line 493, in _make_request
+    conn.request(
+    ~~~~~~~~~~~~^
+        method,
+        ^^^^^^^
+    ...<6 lines>...
+        enforce_content_length=enforce_content_length,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connection.py", line 500, in request
+    self.endheaders()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Python314\Lib\http\client.py", line 1353, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\http\client.py", line 1113, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "C:\Python314\Lib\http\client.py", line 1057, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connection.py", line 331, in connect
+    self.sock = self._new_conn()
+                ~~~~~~~~~~~~~~^^
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connection.py", line 219, in _new_conn
+    raise NewConnectionError(
+        self, f"Failed to establish a new connection: {e}"
+    ) from e
+urllib3.exceptions.NewConnectionError: HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\adapters.py", line 696, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\connectionpool.py", line 842, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\urllib3\util\retry.py", line 543, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\tally-to-books\backend\python_agent.py", line 897, in get_tally_data
+    response = requests.post(TALLY_URL, data=tally_request_xml)
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\api.py", line 134, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\api.py", line 71, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\sessions.py", line 651, in request
+    resp = self.send(prep, **send_kwargs)
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\sessions.py", line 784, in send
+    r = adapter.send(request, **kwargs)
+  File "C:\Users\shriy\AppData\Roaming\Python\Python314\site-packages\requests\adapters.py", line 729, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPConnectionPool(host='localhost', port=9000): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='localhost', port=9000): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\tally-to-books\backend\python_agent.py", line 1023, in sync_data
+    xml_customers = get_tally_data(TALLY_REQUEST_XML_CUSTOMERS)
+  File "D:\tally-to-books\backend\python_agent.py", line 902, in get_tally_data
+    raise Exception("Could not connect to Tally. Is it running and listening on port 9000?")
+Exception: Could not connect to Tally. Is it running and listening on port 9000?
+
+2026-06-11 15:21:31,809:ERROR:Customers fetch error: Traceback (most recent call last):
+  File "D:\tally-to-books\backend\python_agent.py", line 107, in sync_data
+    xml_customers = get_tally_data(TALLY_REQUEST_XML_CUSTOMERS)
+                    ^^^^^^^^^^^^^^
+NameError: name 'get_tally_data' is not defined
+
+2026-06-11 15:23:02,524:ERROR:Traceback (most recent call last):
+  File "D:\tally-to-books\backend\python_agent.py", line 107, in sync_data
+    <ID>Customer Ledgers</ID>
+                            ^
+NameError: name 'get_tally_data' is not defined
+
+2026-06-11 15:24:36,119:WARNING:Skipping tax 'CGST RCM ITC for Rent' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'CGST RCM Payable for Rent' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'GST Paid' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'Gst Payable' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'Ineligible Credit - CGST' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'Ineligible Credit - SGST' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'Ineligible ITC Reversal CGST' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'Ineligible ITC Reversal SGST' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,120:WARNING:Skipping tax 'SGST RCM ITC for Rent' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,121:WARNING:Skipping tax 'SGST RCM Payable for Rent' — rate is 0.0 and could not be determined
+2026-06-11 15:24:36,121:WARNING:Skipping tax 'Tds Payable - 194J' — rate is 0.0 and could not be determined
