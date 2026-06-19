@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from .views import approve_invoices_in_zoho
 
 urlpatterns = [
     # --- User Auth ---
@@ -29,6 +30,9 @@ urlpatterns = [
     path('users/expenses/', views.receive_expenses),
     path('users/opening-balances/', views.receive_opening_balances),
     path('migration-status-all/', views.migration_status_all),
+
+    # --- Marks Invoice Approved ---
+    path('approve-invoices/', approve_invoices_in_zoho, name='approve_invoices'),
 
     # --- Legacy paths ---
     path('receive-customers/', views.receive_customers),

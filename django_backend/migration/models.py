@@ -215,6 +215,7 @@ class Receipt(ZohoMigrationMixin):
     amount         = models.CharField(max_length=50, default='0')
     payment_mode   = models.CharField(max_length=100, default='')
     created_at     = models.DateTimeField(auto_now_add=True)
+    transaction_kind = models.CharField(max_length=20,default='receipt',choices=[('receipt', 'Customer Receipt'),('transfer', 'Bank Transfer'),('contra', 'Contra Entry'),])
 
     def __str__(self):
         return self.receipt_number
@@ -257,6 +258,7 @@ class Payment(ZohoMigrationMixin):
     payment_date   = models.DateField(null=True, blank=True)
     amount         = models.CharField(max_length=50, default='0')
     payment_mode   = models.CharField(max_length=100, blank=True)
+    transaction_kind = models.CharField(max_length=20,default='payment',choices=[('payment', 'Vendor Payment'),('transfer', 'Bank Transfer'),('contra', 'Contra Entry'),('expense', 'Direct Expense'),])
 
     def __str__(self):
         return self.payment_number
@@ -271,7 +273,8 @@ class CreditNote(ZohoMigrationMixin):
     sgst               = models.CharField(max_length=50, default='0')   # added
     igst               = models.CharField(max_length=50, default='0')   # added
     total_amount       = models.CharField(max_length=50, default='0')   # added
-
+    invoice_number     = models.CharField(max_length=100, blank=True, null=True)  # ADD THIS
+    
     def __str__(self):
         return self.credit_note_number
 

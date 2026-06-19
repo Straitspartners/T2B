@@ -187,6 +187,7 @@ export default function Settings() {
     borderRadius: 8,
     fontSize: 14,
     color: '#111827',
+    background: '#fff',
     width: '100%',
     maxWidth: 400,
     outline: 'none',

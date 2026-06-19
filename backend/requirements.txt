@@ -1,4 +1,2 @@
-Flask
-python-dotenv
-requests
-tkcalendar
+requests==2.34.2
+tkcalendar==1.6.1

@@ -11,14 +11,9 @@ function QuickMigration() {
     "User";
 
   const [isSync, setIsSync] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [syncedRecords, setSyncedRecords] = useState({
-    masters: 0,
-    transactions: 0,
-    total: 0,
-  });
   const [syncStatus, setSyncStatus] = useState("Ready to sync");
-  const [syncDetails, setSyncDetails] = useState(null); // ← new: per-type results
+  const [syncDetails, setSyncDetails] = useState(null); // per-type results table
+  const [lastSyncStats, setLastSyncStats] = useState(null); // { success, failed, skipped, total }
 
   const [tallyData, setTallyData] = useState({
     masters: { migrated: 0, pending: 0, total: 0, loading: true },
@@ -35,7 +30,7 @@ function QuickMigration() {
     tallyData.masters.total + tallyData.transactions.total;
 
   const getTotalSyncedRecords = () =>
-    syncedRecords.masters + syncedRecords.transactions;
+    tallyData.masters.migrated + tallyData.transactions.migrated;
 
   const calculateProgress = () => {
     const totalRecords = getTotalRecords();
@@ -53,6 +48,10 @@ function QuickMigration() {
   };
 
   // -------------------- FETCH TALLY DATA --------------------
+  // Single source of truth for BOTH the top cards (Migrated/Pending/Total)
+  // AND the progress bar. Both read from this same tallyData state now,
+  // so they can never disagree (this fixed the "Migrated: 0" vs "100%
+  // completed" mismatch you saw).
 
   const fetchTallyData = async () => {
     try {
@@ -92,6 +91,7 @@ function QuickMigration() {
       });
 
       hideSnackbarAlert();
+      return data;
     } catch (error) {
       console.error("Error fetching tally data:", error);
       showSnackbarAlert("error", `Failed to load Tally data: ${error.message}`);
@@ -99,9 +99,13 @@ function QuickMigration() {
         masters: { ...prev.masters, loading: false },
         transactions: { ...prev.transactions, loading: false },
       }));
+      return null;
     }
   };
 
+  // Background polling — runs always, every 30s, whether or not a sync
+  // is in progress. Keeps the cards fresh and drives the live progress
+  // bar during a sync (no more fake/simulated progress).
   useEffect(() => {
     fetchTallyData();
     const intervalId = setInterval(fetchTallyData, 30000);
@@ -109,85 +113,108 @@ function QuickMigration() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // NOTE: We intentionally do NOT auto-detect completion by comparing
+  // synced vs total record counts. Skipped and failed records never
+  // become "migrated", so that comparison can never reach 100% and would
+  // leave isSync stuck forever. Completion is now detected directly from
+  // the push-to-zoho response in handleSyncNow (it's a synchronous call).
+
   // -------------------- SYNC NOW --------------------
 
   const handleSyncNow = async () => {
-  try {
-    setIsSync(true);
-    setProgress(10);
-    setSyncedRecords({ masters: 0, transactions: 0, total: 0 });
-    setSyncDetails(null);
-    setSyncStatus("Pushing data to Zoho Books in background...");
-    hideSnackbarAlert();
-
-    const authToken = localStorage.getItem("authToken");
-    if (!authToken) {
-      throw new Error("Authentication token not found. Please login again.");
-    }
-
-    const syncResponse = await fetch("http://127.0.0.1:8000/api/push-to-zoho/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({
-        types: ["customers", "vendors", "accounts", "items", "taxes", "invoices", "receipts", "bills", "payments", "credit_notes", "vendor_credits", "journals", "expenses"],
-      }),
-    });
-
-    const rawText = await syncResponse.text();
-    let syncResult;
     try {
-      syncResult = JSON.parse(rawText);
-    } catch {
-      throw new Error(`Server returned unexpected response: ${rawText}`);
-    }
+      setIsSync(true);
+      setSyncDetails(null);
+      setSyncStatus("Starting sync — pushing data to Zoho Books...");
+      hideSnackbarAlert();
 
-    if (!syncResponse.ok && syncResponse.status !== 202) {
-      const djangoError = syncResult?.error || syncResult?.message || `HTTP ${syncResponse.status}`;
-      throw new Error(djangoError);
-    }
-
-    // Background push started — animate progress and poll for updates
-    setProgress(30);
-    setSyncStatus("Sync running in background... Records will update automatically.");
-    showSnackbarAlert("success", "✅ Sync started! Data is being pushed to Zoho Books. This may take 15–20 minutes. The counts below will refresh every 30 seconds.");
-
-    // Animate progress bar slowly to show activity
-    let fakeProgress = 30;
-    const progressInterval = setInterval(() => {
-      fakeProgress = Math.min(fakeProgress + 2, 90);
-      setProgress(fakeProgress);
-    }, 3000);
-
-    // Poll every 30s to update migrated counts
-    let pollCount = 0;
-    const pollInterval = setInterval(async () => {
-      await fetchTallyData();
-      pollCount++;
-      if (pollCount >= 40) { // Stop after 20 minutes
-        clearInterval(pollInterval);
-        clearInterval(progressInterval);
-        setProgress(100);
-        setSyncStatus("Sync completed! Check the counts above.");
-        setIsSync(false);
+      const authToken = localStorage.getItem("authToken");
+      if (!authToken) {
+        throw new Error("Authentication token not found. Please login again.");
       }
-    }, 30000);
 
-    // Store intervals so we don't block the UI
-    setSyncStatus("Sync running in background — check server logs for live progress.");
+      const syncResponse = await fetch("http://127.0.0.1:8000/api/push-to-zoho/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          types: ["customers", "vendors", "accounts", "items", "taxes", "invoices", "receipts", "bills", "payments", "credit_notes", "vendor_credits", "journals", "opening_balances", "expenses"],
+        }),
+      });
 
-  } catch (error) {
-    console.error("Error during sync:", error);
-    showSnackbarAlert("error", `Failed to sync: ${error.message}`);
-    setSyncStatus(`Sync failed: ${error.message}`);
-    setProgress(0);
-    setIsSync(false);
-  }
-  // Note: setIsSync(false) NOT in finally — we want button to stay "Syncing..."
-  // until poll detects completion or timeout
-};
+      const rawText = await syncResponse.text();
+      let syncResult;
+      try {
+        syncResult = JSON.parse(rawText);
+      } catch {
+        throw new Error(`Server returned unexpected response: ${rawText}`);
+      }
+
+      // Debug: log the raw shape once so we can see exactly what key
+      // the backend uses for per-type results.
+      console.log("push-to-zoho response:", syncResult);
+
+      // 207 = Multi-Status, used here because some types succeeded and
+      // some failed. Treat it as a valid completed response, not an error.
+      if (!syncResponse.ok && syncResponse.status !== 202 && syncResponse.status !== 207) {
+        const djangoError = syncResult?.error || syncResult?.message || `HTTP ${syncResponse.status}`;
+        throw new Error(djangoError);
+      }
+
+      // The push endpoint is SYNCHRONOUS — by the time fetch() resolves,
+      // the backend has already finished pushing everything. The Django
+      // view (migration/views.py push_to_zoho) returns per-type results
+      // under the key "details" — e.g.
+      //   { message, total_success, total_failed, total_skipped, details: {...} }
+      const results = syncResult?.details || null;
+
+      if (results && typeof results === "object") {
+        setSyncDetails(results);
+      }
+
+      await fetchTallyData();
+
+      const totalSuccess = syncResult?.total_success ?? 0;
+      const totalFailed = syncResult?.total_failed ?? 0;
+      const totalSkipped = syncResult?.total_skipped ?? 0;
+      const totalProcessed = totalSuccess + totalFailed + totalSkipped;
+
+      setLastSyncStats({
+        success: totalSuccess,
+        failed: totalFailed,
+        skipped: totalSkipped,
+        total: totalProcessed,
+        // "success rate" of this run — pushed vs everything attempted,
+        // excluding already-skipped (already-synced) records from the
+        // denominator so it reflects this run's actual work, not the
+        // lifetime total.
+        percent:
+          totalSuccess + totalFailed > 0
+            ? Math.round((totalSuccess / (totalSuccess + totalFailed)) * 100)
+            : 100,
+      });
+
+      setSyncStatus(
+        `Sync completed — ${totalSuccess.toLocaleString()} pushed, ${totalSkipped.toLocaleString()} skipped, ${totalFailed.toLocaleString()} failed.`
+      );
+      setIsSync(false);
+      showSnackbarAlert(
+        results ? "success" : "warning",
+        results
+          ? "✅ Sync completed!"
+          : "⚠️ Sync finished but couldn't read per-type results — check browser console."
+      );
+    } catch (error) {
+      console.error("Error during sync:", error);
+      showSnackbarAlert("error", `Failed to sync: ${error.message}`);
+      setSyncStatus(`Sync failed: ${error.message}`);
+      setIsSync(false);
+    }
+  };
+
+  const progress = calculateProgress();
 
   // -------------------- RENDER --------------------
 
@@ -342,37 +369,65 @@ function QuickMigration() {
             <div className="status-card-progress">
               <h2 className="status-title">Current Status</h2>
               <div className="status-info-progress">
-                <p className="status-description">
-                  Combined Records —{" "}
-                  {getTotalSyncedRecords().toLocaleString()} of{" "}
-                  {getTotalRecords().toLocaleString()} synced
-                  <br />
-                  <small style={{ color: "#666", fontSize: "12px" }}>
-                    Masters: {syncedRecords.masters.toLocaleString()}/
-                    {tallyData.masters.total.toLocaleString()} | Transactions:{" "}
-                    {syncedRecords.transactions.toLocaleString()}/
-                    {tallyData.transactions.total.toLocaleString()}
-                  </small>
-                </p>
 
-                <div className="progress-container">
-                  <div className="progress-bar-bg">
-                    <div
-                      className="progress-bar-fill"
-                      style={{ width: `${progress}%`, transition: "width 0.5s ease" }}
-                    ></div>
-                  </div>
-                </div>
+                {isSync ? (
+                  // ───────── ACTIVE SYNC: show live progress bar ─────────
+                  <>
+                    <p className="status-description">
+                      Combined Records —{" "}
+                      {getTotalSyncedRecords().toLocaleString()} of{" "}
+                      {getTotalRecords().toLocaleString()} synced
+                      <br />
+                      <small style={{ color: "#666", fontSize: "12px" }}>
+                        Masters: {tallyData.masters.migrated.toLocaleString()}/
+                        {tallyData.masters.total.toLocaleString()} | Transactions:{" "}
+                        {tallyData.transactions.migrated.toLocaleString()}/
+                        {tallyData.transactions.total.toLocaleString()}
+                      </small>
+                    </p>
 
-                <div className="progress-percentage-container">
-                  <span className="progress-percentage-text">
-                    {progress}% completed
-                  </span>
-                </div>
+                    <div className="progress-container">
+                      <div className="progress-bar-bg">
+                        <div
+                          className="progress-bar-fill syncing"
+                          style={{ width: `${progress}%`, transition: "width 0.5s ease" }}
+                        ></div>
+                      </div>
+                    </div>
 
-                <div className="sync-status-text">{syncStatus}</div>
+                    <div className="progress-percentage-container">
+                      <span className="progress-percentage-text">
+                        {progress}% completed
+                      </span>
+                    </div>
 
-                {/* Per-type breakdown table shown after sync */}
+                    <div className="sync-status-text">{syncStatus}</div>
+                  </>
+                ) : syncDetails ? (
+                  // ───────── SYNC FINISHED: show final % + results table, no live bar ─────────
+                  <>
+                    <p className="status-description">
+                      Last sync finished at{" "}
+                      <strong>{lastSyncStats?.percent ?? progress}%</strong> success rate —{" "}
+                      {(lastSyncStats?.success ?? 0).toLocaleString()} pushed,{" "}
+                      {(lastSyncStats?.skipped ?? 0).toLocaleString()} skipped,{" "}
+                      {(lastSyncStats?.failed ?? 0).toLocaleString()} failed
+                    </p>
+                    <div className="sync-status-text">{syncStatus}</div>
+                  </>
+                ) : (
+                  // ───────── NEVER SYNCED YET / IDLE: calm summary, no bar ─────────
+                  <>
+                    <p className="status-description">
+                      {getTotalRecords().toLocaleString()} total records found —{" "}
+                      {getTotalSyncedRecords().toLocaleString()} already in Zoho Books
+                    </p>
+                    <div className="sync-status-text">{syncStatus}</div>
+                  </>
+                )}
+
+                {/* Per-type breakdown table — shown whenever we have
+                    results, whether mid-sync (polled) or after completion */}
                 {syncDetails && (
                   <div style={{ marginTop: "16px", overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -387,7 +442,7 @@ function QuickMigration() {
                       <tbody>
                         {Object.entries(syncDetails).map(([type, counts]) => (
                           <tr key={type} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                            <td style={{ padding: "6px 10px", textTransform: "capitalize" }}>{type}</td>
+                            <td style={{ padding: "6px 10px", textTransform: "capitalize" }}>{type.replace(/_/g, " ")}</td>
                             <td style={{ padding: "6px 10px", textAlign: "center", color: "#38a169" }}>{counts.success ?? 0}</td>
                             <td style={{ padding: "6px 10px", textAlign: "center", color: "#718096" }}>{counts.skipped ?? 0}</td>
                             <td style={{ padding: "6px 10px", textAlign: "center", color: counts.failed > 0 ? "#e53e3e" : "#718096" }}>{counts.failed ?? 0}</td>
