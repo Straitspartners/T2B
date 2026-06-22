@@ -80,6 +80,7 @@ class ZohoConfig(models.Model):
     refresh_token   = models.TextField()
     organization_id = models.CharField(max_length=100)
     updated_at      = models.DateTimeField(auto_now=True)
+    api_base_url = models.CharField(max_length=255, blank=True, null=True)
 
     def __str__(self):
         return f"ZohoConfig({self.user_email})"

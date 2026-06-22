@@ -1,68 +1,61 @@
 from django.urls import path
 from . import views
-from .views import approve_invoices_in_zoho
 
 urlpatterns = [
-    # --- User Auth ---
-    path('register/', views.register_user),
-    path('signin/', views.signin_user),
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    path('register/',           views.register_user,         name='register'),
+    path('login/',              views.signin_user,           name='login'),
+    path('agent-token/',        views.generate_agent_token,  name='agent_token'),
 
-    # --- Agent Token ---
-    path('generate_token_agent/', views.generate_agent_token),
+    # ── Zoho Connection ───────────────────────────────────────────────────────
+    path('connect-zoho/',              views.connect_zoho,        name='connect_zoho'),
+    path('zoho/exchange-code/',        views.exchange_zoho_code,  name='exchange_zoho_code'),  # NEW
+    path('zoho/connection-status/',    views.get_zoho_connection_status, name='zoho_status'),
 
-    # --- Zoho Connection ---
-    path('connect-zoho/', views.connect_zoho),
+    # ── Agent Data Receivers ──────────────────────────────────────────────────
+    path('receive-customers/',         views.receive_customers,         name='receive_customers'),
+    path('receive-vendors/',           views.receive_vendors,           name='receive_vendors'),
+    path('receive-accounts/',          views.receive_accounts,          name='receive_accounts'),
+    path('receive-items/',             views.receive_items,             name='receive_items'),
+    path('receive-invoices/',          views.receive_invoices,          name='receive_invoices'),
+    path('receive-receipts/',          views.receive_receipts,          name='receive_receipts'),
+    path('receive-purchases/',         views.receive_purchases,         name='receive_purchases'),
+    path('receive-payments/',          views.receive_payments,          name='receive_payments'),
+    path('receive-credit-notes/',      views.receive_credit_notes,      name='receive_credit_notes'),
+    path('receive-vendor-credits/',    views.receive_vendor_credits,    name='receive_vendor_credits'),
+    path('receive-journals/',          views.receive_journals,          name='receive_journals'),
+    path('receive-expenses/',          views.receive_expenses,          name='receive_expenses'),
+    path('receive-tax/',               views.receive_tax,               name='receive_tax'),
+    path('receive-opening-balances/',  views.receive_opening_balances,  name='receive_opening_balances'),
 
-    # --- Sync Agent Data Receivers ---
-    path('users/ledgers/', views.receive_customers),
-    path('users/vendors/', views.receive_vendors),
-    path('users/accounts/', views.receive_accounts),
-    path('users/items/', views.receive_items),
-    path('users/invoices/', views.receive_invoices),
-    path('users/receipts/', views.receive_receipts),
-    path('users/taxes/', views.receive_tax),
-    path('users/purchases/', views.receive_purchases),
-    path('users/bills/', views.receive_purchases),
-    path('users/payments/', views.receive_payments),
-    path('users/credit-notes/', views.receive_credit_notes),
-    path('users/vendor-credits/', views.receive_vendor_credits),
-    path('users/journals/', views.receive_journals),
-    path('users/expenses/', views.receive_expenses),
-    path('users/opening-balances/', views.receive_opening_balances),
-    path('migration-status-all/', views.migration_status_all),
+    # ── Push to Zoho ──────────────────────────────────────────────────────────
+    path('push-to-zoho/',              views.push_to_zoho,              name='push_to_zoho'),
+    path('approve-invoices/',          views.approve_invoices_in_zoho,  name='approve_invoices'),
 
-    # --- Marks Invoice Approved ---
-    path('approve-invoices/', approve_invoices_in_zoho, name='approve_invoices'),
+    # ── Dashboard & Status ────────────────────────────────────────────────────
+    path('migration-status/',          views.data_migration_status,     name='migration_status'),
+    path('migration-status-all/',      views.migration_status_all,      name='migration_status_all'),
+    path('total-records/',             views.total_records,             name='total_records'),
+    path('get-masters/',               views.get_masters,               name='get_masters'),
+    path('get-transactions/',          views.get_transactions,          name='get_transactions'),
+    path('next-task/',                 views.get_next_task,             name='next_task'),
 
-    # --- Legacy paths ---
-    path('receive-customers/', views.receive_customers),
-    path('next-task/', views.get_next_task),
+    # ── Per-model Dashboards ──────────────────────────────────────────────────
+    path('dashboard/customers/',       views.customer_dashboard,        name='customer_dashboard'),
+    path('dashboard/vendors/',         views.vendor_dashboard,          name='vendor_dashboard'),
+    path('dashboard/accounts/',        views.coa_dashboard,             name='coa_dashboard'),
+    path('dashboard/items/',           views.items_dashboard,           name='items_dashboard'),
+    path('dashboard/invoices/',        views.invoice_dashboard,         name='invoice_dashboard'),
+    path('dashboard/receipts/',        views.receipt_dashboard,         name='receipt_dashboard'),
+    path('dashboard/credit-notes/',    views.credit_note_dashboard,     name='credit_note_dashboard'),
+    path('dashboard/bills/',           views.bill_dashboard,            name='bill_dashboard'),
+    path('dashboard/payments-made/',   views.payment_made_dashboard,    name='payment_made_dashboard'),
+    path('dashboard/vendor-credits/',  views.vendor_credit_dashboard,   name='vendor_credit_dashboard'),
+    path('dashboard/expenses/',        views.expense_dashboard,         name='expense_dashboard'),
+    path('dashboard/journals/',        views.journal_dashboard,         name='journal_dashboard'),
 
-    # --- Dashboard & Migration ---
-    path('data-migration-status/', views.data_migration_status),
-    path('total-records/', views.total_records),
-    path('push-to-zoho/', views.push_to_zoho),
-
-    # --- Masters & Transactions pages ---
-    path('masters/', views.get_masters),
-    path('transactions/', views.get_transactions),
-
-    path('customerdashboard/', views.customer_dashboard),
-    path('vendordashboard/', views.vendor_dashboard),
-    path('coadashboard/', views.coa_dashboard),
-    path('itemsdashboard/', views.items_dashboard),
-    path('invoicedashboard/', views.invoice_dashboard),
-    path('receiptdashboard/', views.receipt_dashboard),
-    path('creditnotedashboard/', views.credit_note_dashboard),
-    path('billdashboard/', views.bill_dashboard),
-    path('paymentmadedashboard/', views.payment_made_dashboard),
-    path('vendorcreditdashboard/', views.vendor_credit_dashboard),
-    path('expensedashboard/', views.expense_dashboard),
-    path('journaldashboard/', views.journal_dashboard),
-
-    # --- Settings page ---
-    path('settings/zoho-status/', views.get_zoho_connection_status),
-    path('settings/test-tally/', views.test_tally_connection),
-    path('settings/change-password/', views.change_password),
-    path('settings/clear-migration/', views.clear_migration_data),
+    # ── Settings ──────────────────────────────────────────────────────────────
+    path('settings/change-password/',  views.change_password,           name='change_password'),
+    path('settings/clear-migration/',  views.clear_migration_data,      name='clear_migration'),
+    path('settings/test-tally/',       views.test_tally_connection,     name='test_tally'),
 ]

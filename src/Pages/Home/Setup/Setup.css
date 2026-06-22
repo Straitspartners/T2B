@@ -670,3 +670,91 @@
 .continue-button.complete:hover {
   background-color: #047857;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   ADD THESE STYLES to the bottom of your existing Setup.css
+───────────────────────────────────────────────────────────────────────────── */
+
+/* Token section wrapper */
+.token-section {
+  border: 1px solid #e0e7ef;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin: 12px 0 16px;
+  background: #f7fafd;
+}
+
+/* Header row: label + button side by side */
+.token-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.token-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+/* Generate Tokens button */
+.generate-tokens-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #4f46e5;
+  color: #ffffff;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.generate-tokens-button:hover:not(:disabled) {
+  background: #4338ca;
+  transform: translateY(-1px);
+}
+
+.generate-tokens-button:disabled {
+  background: #a5b4fc;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Spinner inside the button */
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Green border on auto-filled token inputs */
+.field-input.token-filled {
+  border-color: #22c55e;
+  background: #f0fdf4;
+}
+
+/* "✓ Auto-filled" badge next to label */
+.token-filled-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  background: #dcfce7;
+  color: #16a34a;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
