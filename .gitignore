@@ -32,3 +32,8 @@ daybook_raw.xml
 # Windows
 Thumbs.db
 Desktop.ini
+django_backend/db.sqlite3
+
+__pycache__/
+
+*.pyc

@@ -1,7 +1,7 @@
 ﻿import xml.etree.ElementTree as ET
 import re
 
-XML_FILE = "D:/tally-to-books/last_raw_tally.xml"
+XML_FILE = "D:/tally-to-books/backend/last_raw_tally.xml"
 
 print("\n" + "="*100)
 print("🔍 ANALYZING TALLY XML - ITEMS")

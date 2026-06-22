@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
+from unittest import result
 import requests
 import xml.etree.ElementTree as ET
 import json
@@ -10,9 +11,6 @@ import traceback
 from datetime import datetime
 from tkcalendar import DateEntry
 import sys
-
-BANK_CASH_LEDGER_SET = None
-VENDOR_NAMES_CACHE = None
 
 # ---------------- CONFIG ----------------
 
@@ -148,18 +146,6 @@ TALLY_REQUEST_XML_COA = """<ENVELOPE>
   </DESC></BODY>
 </ENVELOPE>"""
 
-TALLY_REQUEST_XML_ITEMS = """<ENVELOPE>
-  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Stock Items</ID></HEADER>
-  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
-    <TDL><TDLMESSAGE>
-      <COLLECTION NAME="Stock Items" ISMODIFY="No">
-        <TYPE>StockItem</TYPE>
-        <FETCH>NAME, RATE, DESCRIPTION, PARTNUMBER, PARENT, GSTAPPLICABLE, GSTDETAILS.RATE, GSTDETAILS.HSN</FETCH>
-      </COLLECTION>
-    </TDLMESSAGE></TDL>
-  </DESC></BODY>
-</ENVELOPE>"""
-
 TALLY_REQUEST_XML_TAXES = """<ENVELOPE>
   <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Tax Ledgers</ID></HEADER>
   <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
@@ -185,16 +171,52 @@ TALLY_REQUEST_XML_OPENING_BALANCES = """<ENVELOPE>
   </DESC></BODY>
 </ENVELOPE>"""
 
+# ---------------- ITEM XML HELPERS ----------------
+
+def get_all_item_names_xml():
+    """Fetch just names of all stock items first."""
+    return """<ENVELOPE>
+  <HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>Stock Items</ID></HEADER>
+  <BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES>
+    <TDL><TDLMESSAGE>
+      <COLLECTION NAME="Stock Items" ISMODIFY="No">
+        <TYPE>StockItem</TYPE>
+        <FETCH>NAME</FETCH>
+      </COLLECTION>
+    </TDLMESSAGE></TDL>
+  </DESC></BODY>
+</ENVELOPE>"""
+
+
+def get_single_item_xml(item_name):
+    """Fetch a single stock item with full GST details using Object export."""
+    # Escape XML special characters in item name
+    safe_name = (item_name
+                 .replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace("'", "&apos;")
+                 .replace('"', "&quot;"))
+    return f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>Export</TALLYREQUEST>
+    <TYPE>Object</TYPE>
+    <SUBTYPE>StockItem</SUBTYPE>
+    <ID>{safe_name}</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        <SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>
+      </STATICVARIABLES>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+
 # ---------------- DYNAMIC XML BUILDER ----------------
 
 def get_daybook_xml(from_date, to_date):
-    """
-    Fetch all vouchers using TDL Collection export.
-    BUG FIX #2: Added REFERENCE to FETCH list so the human-readable invoice
-    number (e.g. GST/2024-25/228) is available. VOUCHERNUMBER alone returns
-    a sequential internal counter ('1','2','3') in Collection export mode.
-    BUG FIX #6: Caller uses timeout=120 for this large request.
-    """
     return f"""<ENVELOPE>
   <HEADER>
     <VERSION>1</VERSION>
@@ -291,83 +313,30 @@ def clean_xml(xml_string):
     xml_string = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', xml_string)
     return xml_string
 
-def clean_xml(xml_string):
-    xml_string = re.sub(r'&#\d+;', '', xml_string)
-    xml_string = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', xml_string)
-    return xml_string
-
-# ──────────────── INSERT NEW FUNCTION HERE ────────────────
-def build_ledger_parent_map(xml_coa_data):
-    """..."""
-    ledger_parent_map = {}
-    try:
-        xml_data = clean_xml(xml_coa_data)
-        root = ET.fromstring(xml_data)
-        for ledger in root.findall(".//LEDGER"):
-            name = (ledger.findtext(".//NAME") or "").strip().lower()
-            parent = (ledger.findtext("PARENT") or "").strip().lower()
-            if name:
-                ledger_parent_map[name] = parent
-        log.info(f"[PARSE] Built ledger-parent map: {len(ledger_parent_map)} ledgers")
-    except ET.ParseError as e:
-        log.error(f"[PARSE] ❌ Could not build ledger-parent map: {e}")
-    return ledger_parent_map
-# ──────────────── END NEW FUNCTION ────────────────
-
 def _resolve_voucher_number(voucher, prefix, date_fmt=""):
-    """
-    Universal voucher number resolver — works across ALL Tally numbering styles.
-
-    Tally companies number their vouchers in different ways:
-      1. Auto (formatted) : VOUCHERNUMBER = 'GST/2024-25/001'  → use as-is
-      2. Auto Retain       : VOUCHERNUMBER = '1','2','3'         → prefix it
-      3. Manual            : REFERENCE    = 'INV-2024-001'       → use REFERENCE
-      4. Bill allocation   : BILLALLOCATIONS.LIST.NAME           → use bill name
-      5. None of above     : build from prefix + MASTERID
-
-    Priority order (first non-empty wins):
-      REFERENCE  →  formatted VOUCHERNUMBER  →  BILL ALLOC NAME
-      →  prefix+VOUCHERNUMBER  →  prefix+MASTERID
-
-    Args:
-        voucher  : XML VOUCHER element
-        prefix   : entity prefix e.g. 'INV', 'BILL', 'REC', 'PAY', 'CN', 'JV', 'EXP'
-        date_fmt : formatted date string e.g. '2024-04-01' (used in fallback)
-
-    Returns:
-        str — a non-empty, Zoho-safe voucher number
-    """
     vch_no    = (voucher.findtext("VOUCHERNUMBER") or "").strip()
     reference = (voucher.findtext("REFERENCE")     or "").strip()
     master_id = (voucher.findtext("MASTERID")      or "").strip()
     num_style = (voucher.findtext("NUMBERINGSTYLE") or "").strip().lower()
 
-    # 1. REFERENCE field — manually entered by user, always the best source
     if reference:
         return reference
 
-    # 2. VOUCHERNUMBER — use directly if it looks formatted (contains non-digit chars)
-    #    e.g. 'GST/2024-25/001', 'INV-001', 'TI/24-25/100'
     if vch_no and not vch_no.isdigit():
         return vch_no
 
-    # 3. Bill allocation name — sometimes stores the invoice reference
     for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
         for ba in le.findall(".//BILLALLOCATIONS.LIST"):
             name = (ba.findtext("NAME") or "").strip()
             if name and name != vch_no:
                 return name
 
-    # 4. VOUCHERNUMBER is a plain integer — prefix it to make it Zoho-safe
-    #    e.g. '1' → 'INV-1',  '344' → 'BILL-344'
     if vch_no and vch_no.isdigit():
         return f"{prefix}-{vch_no}"
 
-    # 5. Last resort — use MASTERID with prefix
     if master_id:
         return f"{prefix}-M{master_id}"
 
-    # 6. Absolute fallback — prefix + date (should never reach here)
     return f"{prefix}-{date_fmt.replace('-', '')}"
 
 
@@ -380,55 +349,50 @@ def _format_date(date_raw):
         pass
     return date_raw
 
-def _is_cash_bank_ledger(name):
-    """
-    Reliable check using Tally's own PARENT classification (Bank Accounts,
-    Bank OCC A/c, Bank OD A/c, Cash-in-Hand) — not name guessing.
-    Works for ANY client, regardless of what they named their bank/cash ledgers.
-    """
-    if not BANK_CASH_LEDGER_SET:
-        return False
-    return (name or "").strip() in BANK_CASH_LEDGER_SET
-
-
 def _get_voucher_amount(voucher):
-    """
-    Extract the REAL counterparty (customer/vendor) and amount from a voucher.
-    Tally sometimes marks the bank/cash ledger as ISPARTYLEDGER="Yes" by mistake
-    (a data-entry quirk), which would otherwise make party_name = the bank name.
-    This function actively excludes bank/cash ledgers (identified via Tally's
-    own PARENT classification, not name keywords) when picking the party.
-    Returns: (party_name, amount, is_pure_bank_transfer)
-    """
-    ledger_entries = []
+    party_name = (
+        voucher.findtext("PARTYLEDGERNAME") or
+        voucher.findtext("BASICBUYERNAME") or
+        "Unknown"
+    ).strip()
+
+    total_amount = 0.0
+
     for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
-        ln = (le.findtext("LEDGERNAME") or "").strip()
         is_party = (le.findtext("ISPARTYLEDGER") or "").strip().lower() == "yes"
         try:
             amt = abs(float(le.findtext("AMOUNT") or "0.0"))
         except ValueError:
             amt = 0.0
-        ledger_entries.append({"name": ln, "is_party": is_party, "amount": amt})
+        if is_party and amt > 0:
+            total_amount = amt
+            break
 
-    # Priority 1 — ISPARTYLEDGER=Yes AND not a bank/cash account (the real party)
-    for le in ledger_entries:
-        if le["is_party"] and le["amount"] > 0 and not _is_cash_bank_ledger(le["name"]):
-            return le["name"], le["amount"], False
+    if total_amount == 0.0:
+        for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
+            ln = (le.findtext("LEDGERNAME") or "").strip()
+            try:
+                amt = abs(float(le.findtext("AMOUNT") or "0.0"))
+            except ValueError:
+                amt = 0.0
+            if ln == party_name and amt > 0:
+                total_amount = amt
+                break
 
-    # Priority 2 — any non-bank/cash ledger with a nonzero amount
-    for le in ledger_entries:
-        if le["amount"] > 0 and not _is_cash_bank_ledger(le["name"]):
-            return le["name"], le["amount"], False
+    if total_amount == 0.0:
+        for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
+            try:
+                amt = abs(float(le.findtext("AMOUNT") or "0.0"))
+            except ValueError:
+                amt = 0.0
+            if amt > total_amount:
+                total_amount = amt
 
-    # Priority 3 — every ledger really IS bank/cash → genuine bank transfer
-    fallback_name = voucher.findtext("PARTYLEDGERNAME") or voucher.findtext("BASICBUYERNAME") or "Unknown"
-    total_amount = max((le["amount"] for le in ledger_entries), default=0.0)
-    return fallback_name, total_amount, True
+    return party_name, total_amount
 
 # ---------------- VOUCHER TYPE CLASSIFICATION ----------------
 
 VOUCHER_TYPE_MAP = {
-    # Sales
     "sales": "sales",
     "gst sales": "sales",
     "sales invoice": "sales",
@@ -439,7 +403,6 @@ VOUCHER_TYPE_MAP = {
     "export invoice": "sales",
     "sales order": "sales",
     "pos invoice": "sales",
-    # Purchase
     "purchase": "purchase",
     "gst purchase": "purchase",
     "purchase invoice": "purchase",
@@ -447,73 +410,23 @@ VOUCHER_TYPE_MAP = {
     "purchase - tax invoice": "purchase",
     "import invoice": "purchase",
     "purchase order": "purchase",
-    # Receipt
     "receipt": "receipt",
     "receipt voucher": "receipt",
-    # Payment
     "payment": "payment",
     "payment voucher": "payment",
-    # Credit Note
     "credit note": "credit_note",
     "credit note voucher": "credit_note",
     "sales return": "credit_note",
-    # Debit Note
     "debit note": "debit_note",
     "debit note voucher": "debit_note",
     "purchase return": "debit_note",
-    # Journal
     "journal": "journal",
     "journal voucher": "journal",
-    # Contra (bank/cash transfers — skip)
     "contra": "contra",
 }
 
 def classify_voucher(vch_type_raw):
-    """Return canonical type or None if unrecognised."""
     return VOUCHER_TYPE_MAP.get(vch_type_raw.strip().lower())
-
-# ──────────────── INSERT NEW MAP + FUNCTION HERE ────────────────
-GROUP_TO_TRANSACTION_KIND = {
-    "bank accounts":          "transfer",
-    "bank occ a/c":           "transfer",
-    "bank od a/c":            "transfer",
-    "cash-in-hand":           "contra",
-    "capital account":        "journal_candidate",
-    "reserves & surplus":     "journal_candidate",
-    "loans (liability)":      "journal_candidate",
-    "loans & advances (asset)":  "journal_candidate",
-    "secured loans":          "journal_candidate",
-    "unsecured loans":        "journal_candidate",
-    "direct expenses":        "journal_candidate",
-    "indirect expenses":      "journal_candidate",
-    "direct incomes":         "journal_candidate",
-    "indirect incomes":       "journal_candidate",
-    "sundry debtors":         "receipt",
-    "sundry creditors":       "journal_candidate",
-    "duties & taxes":         "journal_candidate",
-    "provisions":             "journal_candidate",
-    "suspense a/c":           "journal_candidate",
-    "branch / divisions":     "journal_candidate",
-}
-
-def classify_transaction_by_group(party_name, ledger_parent_map, contact_type='customer'):
-    """..."""
-    name_lower = (party_name or '').strip().lower()
-    parent_group = ledger_parent_map.get(name_lower, '')
-
-    if parent_group in GROUP_TO_TRANSACTION_KIND:
-        return GROUP_TO_TRANSACTION_KIND[parent_group]
-
-    log.warning(f"[CLASSIFY] No PARENT group found for '{party_name}' — "
-                f"using name-pattern fallback. Consider re-syncing COA.")
-    BANK_PATTERNS = ['bank', 'icici', 'hdfc', 'sbi', 'axis', 'kotak', 'canara']
-    CASH_PATTERNS = ['cash', 'petty cash']
-    if any(p in name_lower for p in BANK_PATTERNS):
-        return 'transfer'
-    if any(p in name_lower for p in CASH_PATTERNS):
-        return 'contra'
-    return 'receipt' if contact_type == 'customer' else 'payment'
-# ──────────────── END NEW MAP + FUNCTION ────────────────
 
 # ---------------- XML PARSERS ----------------
 
@@ -572,62 +485,119 @@ def parse_coa_ledgers(xml_data):
 
 
 def parse_items(xml_data):
+    """
+    Two-step approach:
+    1. Parse item names from collection XML
+    2. Fetch each item individually using Object export for full GST/HSN details
+    """
     items = []
     try:
         xml_data = clean_xml(xml_data)
         root = ET.fromstring(xml_data)
+
+        # Step 1: Get all item names from the collection response
+        item_names = []
         for item in root.findall(".//STOCKITEM"):
-            name = item.findtext(".//NAME", default="Unknown")
-            rate_raw = (item.findtext("RATE", default="0") or "0").strip()
-            log.debug(f"[ITEM] {item.findtext('.//NAME', '')} raw rate: '{rate_raw}'")
-            rate_match = re.search(r"[\d]+\.?\d*", rate_raw.replace(",", ""))
-            rate = rate_match.group(0) if rate_match else "0"
-            log.debug(f"[ITEM] {item.findtext('.//NAME', '')} parsed rate: '{rate}'")
+            name = item.findtext(".//NAME", default="").strip()
+            if name and name.lower() != "unknown":
+                item_names.append(name)
 
-            description = item.findtext("DESCRIPTION", default="")
-            sku = item.findtext("PARTNUMBER", default="")
-            product_type = item.findtext("PARENT", default="General")
-            gst_applicable = item.findtext("GSTAPPLICABLE", default="Not Applicable")
-            gst_rate = "0"
-            hsn_code = ""
+        log.info(f"[ITEMS] Found {len(item_names)} items — fetching GST/HSN details individually...")
 
-            gst_details_list = item.findall("GSTDETAILS.LIST")
-            if gst_details_list:
-                first = gst_details_list[0]
-                hsn_text = first.findtext("HSN")
-                if hsn_text:
-                    hsn_code = hsn_text.strip()
-                statewise = first.find("STATEWISEDETAILS.LIST")
-                if statewise is not None:
-                    rate_details = statewise.findall("RATEDETAILS.LIST")
-                    igst_found = False
-                    for rd in rate_details:
-                        duty = rd.findtext("GSTRATEDUTYHEAD", "").strip()
-                        rval = rd.findtext("GSTRATE", "").strip()
-                        if duty == "IGST" and rval:
-                            gst_rate = rval
-                            igst_found = True
-                            break
-                    if not igst_found:
-                        total = 0
-                        for rd in rate_details:
-                            duty = rd.findtext("GSTRATEDUTYHEAD", "").strip()
-                            rval = rd.findtext("GSTRATE", "").strip()
-                            if duty in ("CGST", "SGST/UTGST") and rval:
-                                try:
-                                    total += float(rval)
-                                except ValueError:
-                                    pass
-                        if total > 0:
-                            gst_rate = str(total)
+        # Step 2: Fetch each item individually for full GST details
+        for name in item_names:
+            try:
+                item_xml = get_tally_data(get_single_item_xml(name), f"ITEM:{name}")
+                item_root = ET.fromstring(clean_xml(item_xml))
+                item_elem = item_root.find(".//STOCKITEM")
+                if item_elem is None:
+                    log.warning(f"[ITEM] No STOCKITEM element found for '{name}' — skipping")
+                    continue
 
-            items.append({
-                "name": name, "rate": rate, "description": description,
-                "sku": sku, "product_type": product_type,
-                "gst_applicable": gst_applicable, "gst_rate": gst_rate, "hsn_code": hsn_code
-            })
-        log.info(f"[PARSE] ITEMS: {len(items)} found")
+                # Rate
+                rate_raw = (item_elem.findtext("RATE") or "0").strip()
+                rate_match = re.search(r"[\d]+\.?\d*", rate_raw.replace(",", ""))
+                rate = rate_match.group(0) if rate_match else "0"
+
+                # Basic fields
+                description  = item_elem.findtext("DESCRIPTION") or ""
+                sku          = item_elem.findtext("PARTNUMBER") or ""
+                product_type = item_elem.findtext("PARENT") or "General"
+                gst_applicable = item_elem.findtext("GSTAPPLICABLE") or "Not Applicable"
+
+                # Type of supply
+                type_of_supply_raw = (
+                    item_elem.findtext("TYPEOFGSTSUPPLY") or
+                    item_elem.findtext("TYPEOFSUPPLY") or
+                    item_elem.findtext("SUPPLYTYPE") or ""
+                )
+                type_of_supply = "Unknown"
+                if type_of_supply_raw:
+                    s = type_of_supply_raw.lower().strip()
+                    if "goods" in s and "service" in s:
+                        type_of_supply = "Goods & Services"
+                    elif "goods" in s:
+                        type_of_supply = "Goods"
+                    elif "service" in s:
+                        type_of_supply = "Services"
+
+                # HSN code and GST rate from full object details
+                hsn_code = ""
+                gst_rate = "0"
+
+                for gst_detail in item_elem.findall(".//GSTDETAILS.LIST"):
+                    # Try multiple possible HSN field names
+                    hsn = (
+                        gst_detail.findtext("HSN") or
+                        gst_detail.findtext("HSNCODE") or
+                        gst_detail.findtext("HSNDETAILS") or
+                        ""
+                    )
+                    if hsn.strip():
+                        hsn_code = hsn.strip()
+
+                    # Extract GST rate from statewise details
+                    for statewise in gst_detail.findall(".//STATEWISEDETAILS.LIST"):
+                        for rate_detail in statewise.findall(".//RATEDETAILS.LIST"):
+                            duty_head = (rate_detail.findtext("GSTRATEDUTYHEAD") or "").strip()
+                            rate_val  = (rate_detail.findtext("GSTRATE") or "").strip()
+                            if duty_head == "IGST" and rate_val:
+                                gst_rate = rate_val
+                                break
+
+                log.info(f"[ITEM] {name} → HSN: '{hsn_code}' | GST: {gst_rate}% | Supply: {type_of_supply}")
+
+                items.append({
+                    "name":           name,
+                    "rate":           rate,
+                    "description":    description,
+                    "sku":            sku,
+                    "product_type":   product_type,
+                    "type_of_supply": type_of_supply,
+                    "gst_applicable": gst_applicable,
+                    "gst_rate":       gst_rate,
+                    "hsn_code":       hsn_code,
+                })
+
+            except Exception as e:
+                log.warning(f"[ITEM] ⚠️ Failed to fetch details for '{name}': {e}")
+                # Still add the item with empty HSN so it's not lost
+                items.append({
+                    "name":           name,
+                    "rate":           "0",
+                    "description":    "",
+                    "sku":            "",
+                    "product_type":   "General",
+                    "type_of_supply": "Unknown",
+                    "gst_applicable": "Not Applicable",
+                    "gst_rate":       "0",
+                    "hsn_code":       "",
+                })
+                continue
+
+        log.info(f"[ITEMS] ✅ Parsed {len(items)} items with HSN codes")
         return items
+
     except ET.ParseError as e:
         log.error(f"[PARSE] ❌ XML Parse Error (Items): {e}")
         raise Exception("Failed to parse item XML from Tally.")
@@ -736,51 +706,13 @@ def parse_opening_balances(xml_data):
         raise Exception("Failed to parse Opening Balance XML from Tally.")
 
 
-def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=None):
-    ledger_parent_map = ledger_parent_map or {}   # ←←← ADD THIS LINE right after the signature
-    """
-    Parse all vouchers from Tally Collection XML.
-
-    BUG FIXES APPLIED:
-    #1 — is_cancelled check moved to AFTER vch_no is defined (was NameError crash)
-    #2 — vch_no now uses REFERENCE field (human-readable invoice number) with
-         VOUCHERNUMBER as fallback. VOUCHERNUMBER alone returns '1','2','3' in
-         Collection export mode, not the actual formatted invoice number.
-    #4 — Expense vs payment classification now checks paid_through (cash/bank
-         ledger) instead of party_name. party_name is the vendor, not cash/bank.
-    #7 — grand_total for bills recomputed AFTER the purchase zero-amount fallback,
-         not before, so bills with 0 initial total get the correct grand_total.
-    """
+def parse_all_vouchers(xml_data, from_date="", to_date=""):
     result = {
         "invoices": [], "receipts": [], "bills": [],
         "payments": [], "credit_notes": [], "vendor_credits": [],
         "journals": [], "expenses": [],
     }
     unmatched = {}
-
-    # Build a reliable ledger_name → is_bank_or_cash lookup using Tally's own
-    # PARENT classification — NOT keyword guessing on the ledger name.
-    global BANK_CASH_LEDGER_SET
-    BANK_CASH_LEDGER_SET = set()
-    try:
-        xml_coa_cache = get_tally_data(TALLY_REQUEST_XML_COA, "COA (classification cache)")
-        coa_list_cache = parse_coa_ledgers(xml_coa_cache)
-        for acct in coa_list_cache:
-            if acct.get("account_type") in ("bank", "cash"):
-                BANK_CASH_LEDGER_SET.add(acct["account_name"].strip())
-        log.info(f"[PARSE] Bank/Cash ledger set built: {len(BANK_CASH_LEDGER_SET)} ledgers")
-    except Exception as e:
-        log.warning(f"[PARSE] Could not build bank/cash ledger set: {e}")
-
-    global VENDOR_NAMES_CACHE
-    VENDOR_NAMES_CACHE = set()
-    try:
-        xml_vendors_cache = get_tally_data(TALLY_REQUEST_XML_VENDORS, "VENDORS (classification cache)")
-        vendor_list_cache = parse_ledgers(xml_vendors_cache, "vendor")
-        VENDOR_NAMES_CACHE = {v["name"].strip() for v in vendor_list_cache}
-        log.info(f"[PARSE] Vendor name set built: {len(VENDOR_NAMES_CACHE)} vendors")
-    except Exception as e:
-        log.warning(f"[PARSE] Could not build vendor name cache: {e}")
 
     try:
         xml_data = clean_xml(xml_data)
@@ -800,26 +732,15 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                 voucher.findtext("VOUCHERTYPENAME", default="")
             ).strip()
 
-            # Skip vouchers with no type — header/template nodes in Collection export
             if not vch_type_raw:
                 log.debug(f"[VOUCHER] ⏭ Skipping voucher with empty type")
                 continue
 
             canonical = classify_voucher(vch_type_raw)
 
-            # date_fmt must be assigned BEFORE the resolver call (resolver uses it as fallback)
             date_raw  = voucher.findtext("DATE", default="").strip()
             date_fmt  = _format_date(date_raw)
 
-            # ── Resolve human-readable voucher number (universal across all companies) ──
-            # Different Tally companies number vouchers differently:
-            #   - Some use formatted VOUCHERNUMBER  : 'GST/2024-25/001' → use as-is
-            #   - Some use plain sequential numbers : '1','2','3' → prefix e.g. 'INV-1'
-            #   - Some store the number in REFERENCE field (manual numbering)
-            #   - Some store it in BILLALLOCATIONS.LIST.NAME
-            # _resolve_voucher_number() handles all these cases automatically.
-            # Prefix is set per canonical type so e.g. invoices get 'INV-1',
-            # bills get 'BILL-1', receipts get 'REC-1' etc.
             type_prefix_map = {
                 "sales":       "INV",
                 "purchase":    "BILL",
@@ -832,9 +753,7 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
             }
             prefix = type_prefix_map.get(canonical or "", "VCH")
             vch_no = _resolve_voucher_number(voucher, prefix, date_fmt)
-            # ── END voucher number resolution ───────────────────────────────────────
 
-            # ── is_cancelled check after vch_no is defined ────────────────────────
             is_cancelled = (
                 voucher.get("ISCANCELLED") or
                 voucher.findtext("ISCANCELLED", "")
@@ -842,11 +761,10 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
             if is_cancelled in ("yes", "true", "1"):
                 log.debug(f"[VOUCHER] ⏭ Skipping cancelled voucher #{vch_no}")
                 continue
-            # ─────────────────────────────────────────────────────────────────────
-            narration = voucher.findtext("NARRATION", default="").strip()
-            party_name, total_amount, is_bank_transfer = _get_voucher_amount(voucher)
 
-            # For sales vouchers with unknown party — use Cash Customer fallback
+            narration = voucher.findtext("NARRATION", default="").strip()
+            party_name, total_amount = _get_voucher_amount(voucher)
+
             if party_name in [None, "", "Unknown"] and canonical == "sales":
                 party_name = (
                     voucher.findtext("BASICBUYERNAME", "").strip() or
@@ -854,7 +772,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     "Cash Customer"
                 )
 
-            # Tax amounts
             cgst = sgst = igst = 0.0
             tax_ledgers = []
             for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
@@ -877,7 +794,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     if amt > 0:
                         tax_ledgers.append({"name": ln, "amount": amt, "type": "igst"})
 
-            # Line items (inventory)
             line_items = []
             for ie in voucher.findall(".//ALLINVENTORYENTRIES.LIST"):
                 item_name = ie.findtext("STOCKITEMNAME", default="Item")
@@ -888,13 +804,12 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     amt = 0.0
                 line_items.append({"item_name": item_name, "quantity": qty, "amount": f"{amt:.2f}"})
 
-            # Payment mode / bill reference
-            # Payment mode / bill reference — uses structural bank/cash detection
             payment_mode = "cash"
             ref_name = None
+            cash_bank_kw = ["bank", "cash", "hdfc", "sbi", "icici", "axis", "kotak", "yes bank", "canara"]
             for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
                 ln = (le.findtext("LEDGERNAME") or "").strip()
-                if _is_cash_bank_ledger(ln):
+                if any(k in ln.lower() for k in cash_bank_kw):
                     payment_mode = ln
                 bill_alloc = le.find(".//BILLALLOCATIONS.LIST")
                 if bill_alloc is not None:
@@ -902,10 +817,8 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     if r:
                         ref_name = r.strip()
 
-            # grand_total for non-purchase types (purchase recalculates below)
             grand_total = f"{total_amount + cgst + sgst + igst:.2f}"
 
-            # ────────────────────────────────────────────────────────────────────────
             if canonical == "sales":
                 if not line_items:
                     line_items = [{"item_name": f"Sales - {party_name}", "quantity": "1", "amount": f"{total_amount:.2f}"}]
@@ -923,7 +836,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                 log.debug(f"[VOUCHER] ✅ INVOICE #{vch_no} | {party_name} | {grand_total}")
 
             elif canonical == "receipt":
-                kind = classify_transaction_by_group(party_name, ledger_parent_map, 'customer')   # ←←← ADD
                 result["receipts"].append({
                     "receipt_number": vch_no,
                     "customer_name":  party_name,
@@ -931,25 +843,20 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     "amount":         f"{total_amount:.2f}",
                     "payment_mode":   payment_mode,
                     "agst_ref_name":  ref_name,
-                    "transaction_kind": kind,   
                 })
-                log.debug(f"[VOUCHER] ✅ RECEIPT #{vch_no} | {party_name} | kind={kind}")
+                log.debug(f"[VOUCHER] ✅ RECEIPT #{vch_no} | {party_name} | {total_amount:.2f}")
 
             elif canonical == "purchase":
-                # ── BUG FIX #7: zero-amount fallback BEFORE grand_total ────────────
-                # Original code computed grand_total at the top of the loop BEFORE
-                # this fallback, so bills with 0 total got wrong grand_total.
                 if total_amount == 0.0:
                     for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
                         try:
                             amt = float(le.findtext("AMOUNT") or "0.0")
-                            if amt < 0:                         # credit side = purchase amount
+                            if amt < 0:
                                 total_amount = abs(amt)
                                 break
                         except ValueError:
                             pass
-                grand_total = f"{total_amount + cgst + sgst + igst:.2f}"  # recompute after fix
-                # ── END FIX #7 ──────────────────────────────────────────────────────
+                grand_total = f"{total_amount + cgst + sgst + igst:.2f}"
                 if not line_items:
                     line_items = [{"item_name": f"Purchase - {party_name}", "quantity": "1", "amount": f"{total_amount:.2f}"}]
                 result["bills"].append({
@@ -966,101 +873,69 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                 log.debug(f"[VOUCHER] ✅ BILL #{vch_no} | {party_name} | {grand_total}")
 
             elif canonical == "payment":
-                # party_name is now reliably the real vendor/payee (never the
-                # bank/cash ledger), thanks to the structural fix in
-                # _get_voucher_amount(). is_bank_transfer=True only when EVERY
-                # ledger leg in the voucher is genuinely a bank/cash account.
-
                 expense_account = None
                 paid_through = "Cash"
 
                 for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
                     ln = (le.findtext("LEDGERNAME") or "").strip()
+                    ln_lower = ln.lower()
                     is_party = (le.findtext("ISPARTYLEDGER") or "").strip().lower() == "yes"
                     try:
                         amt = float(le.findtext("AMOUNT") or "0.0")
                     except ValueError:
                         amt = 0.0
 
-                    if _is_cash_bank_ledger(ln):
+                    if any(k in ln_lower for k in cash_bank_kw):
                         paid_through = ln
-                    elif not is_party and ln != party_name and amt != 0.0:
-                        # A second non-party, non-bank ledger alongside the real
-                        # party ledger = a direct expense account, not a vendor bill
+                    elif not is_party and not any(k in ln_lower for k in cash_bank_kw) and amt != 0.0:
+                        # Only treat as expense if ledger name matches known expense patterns
+                        # Vendor names (Sundry Creditors) should NOT be classified as expense accounts
+                        expense_keywords = [
+                            "expense", "charges", "freight", "transport", "salary",
+                            "wages", "rent", "electricity", "telephone", "postage",
+                            "printing", "stationery", "repairs", "maintenance",
+                            "insurance", "interest", "bank charges", "audit",
+                            "accounting", "legal", "professional", "advertisement",
+                            "travelling", "conveyance", "loading", "unloading",
+                            "rates", "taxes", "duties", "gst paid", "tds",
+                             "od interest", "commission"
+                    ]
+                    is_expense_ledger = any(kw in ln_lower for kw in expense_keywords)
+                    if is_expense_ledger:
                         expense_account = ln
+        
 
-                is_known_vendor = party_name in (VENDOR_NAMES_CACHE or set())
+                # If there's a party name that isn't a bank/cash account, it's a vendor payment
+                is_vendor_payment = (
+                    party_name not in [None, "", "Unknown", "Cash Customer"] and
+                    not any(k in party_name.lower() for k in cash_bank_kw)
+                )
 
-                if is_bank_transfer:
-                    result["payments"].append({
-                        "payment_number": vch_no,
-                        "vendor_name":    party_name,
-                        "payment_date":   date_fmt,
-                        "amount":         f"{total_amount:.2f}",
-                        "payment_mode":   payment_mode,
-                        "ref_name":       ref_name,
-                        "transaction_kind": "transfer",
-                    })
-                    log.debug(f"[VOUCHER] ⏭ PAYMENT #{vch_no} | {party_name} | TRANSFER (bank-to-bank)")
-                elif is_known_vendor:
-                    # party_name IS a registered vendor → genuine vendor payment
-                    result["payments"].append({
-                        "payment_number": vch_no,
-                        "vendor_name":    party_name,
-                        "payment_date":   date_fmt,
-                        "amount":         f"{total_amount:.2f}",
-                        "payment_mode":   payment_mode,
-                        "ref_name":       ref_name,
-                        "transaction_kind": "payment",
-                    })
-                    log.debug(f"[VOUCHER] ✅ PAYMENT #{vch_no} | {party_name} | {total_amount:.2f}")
-                else:
-                    # party_name is NOT a registered vendor → it's a direct expense.
-                    # Use party_name itself as the expense account if no separate
-                    # expense ledger was found.
-                    account_for_expense = expense_account or party_name
+                # Only classify as expense if NO vendor party is involved
+                if expense_account and not is_vendor_payment:
                     result["expenses"].append({
                         "payment_number": vch_no,
                         "payment_date":   date_fmt,
-                        "account_name":   account_for_expense,
+                        "account_name":   expense_account,
                         "paid_through":   paid_through,
                         "amount":         f"{total_amount:.2f}",
                         "narration":      narration,
                     })
-                    log.debug(f"[VOUCHER] ✅ EXPENSE #{vch_no} | {account_for_expense} | {total_amount:.2f}")
+                    log.debug(f"[VOUCHER] ✅ EXPENSE #{vch_no} | {expense_account} | {total_amount:.2f}")
+                else:
+                    result["payments"].append({
+                        "payment_number": vch_no,
+                        "vendor_name":    party_name,
+                        "payment_date":   date_fmt,
+                        "amount":         f"{total_amount:.2f}",
+                        "payment_mode":   payment_mode,
+                        "ref_name":       ref_name,
+                    })
+                    log.debug(f"[VOUCHER] ✅ PAYMENT #{vch_no} | {party_name} | {total_amount:.2f}")
 
             elif canonical == "credit_note":
-                # ✅ ENHANCED: Try multiple fields to find the invoice reference
-                invoice_ref = ''
-                
-                # Strategy 1: Check BILLALLOCATIONS (for linked bills/invoices)
-                for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
-                    bill_alloc = le.find(".//BILLALLOCATIONS.LIST")
-                    if bill_alloc is not None:
-                        r = bill_alloc.findtext("NAME")
-                        if r:
-                            invoice_ref = r.strip()
-                            break
-                
-                # Strategy 2: Check REFERENCE field (like invoices use)
-                if not invoice_ref:
-                    invoice_ref = voucher.findtext("REFERENCE", "").strip()
-                
-                # Strategy 3: Check for AGAINSTREF or similar
-                if not invoice_ref:
-                    invoice_ref = voucher.findtext("AGAINSTREF", "").strip()
-                
-                # Strategy 4: Check all ALLLEDGERENTRIES for invoice reference
-                if not invoice_ref:
-                    for le in voucher.findall(".//ALLLEDGERENTRIES.LIST"):
-                        ref = le.findtext("REFERENCE", "").strip()
-                        if ref and ref.startswith("INV"):
-                            invoice_ref = ref
-                            break
-                
                 if not line_items:
                     line_items = [{"item_name": f"Credit - {party_name}", "quantity": "1", "amount": f"{total_amount:.2f}"}]
-                
                 result["credit_notes"].append({
                     "customer_name":      party_name,
                     "credit_note_number": vch_no,
@@ -1069,21 +944,20 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     "cgst":               f"{cgst:.2f}",
                     "sgst":               f"{sgst:.2f}",
                     "total_amount":       grand_total,
-                    "invoice_number":     invoice_ref,  # NOW PROPERLY EXTRACTED!
                 })
-                log.debug(f"[VOUCHER] ✅ CREDIT NOTE #{vch_no} | {party_name} | Invoice: {invoice_ref or 'NONE'} | {grand_total}")
+                log.debug(f"[VOUCHER] ✅ CREDIT NOTE #{vch_no} | {party_name} | {grand_total}")
 
             elif canonical == "debit_note":
                 if not line_items:
                     line_items = [{"item_name": f"Debit - {party_name}", "quantity": "1", "amount": f"{total_amount:.2f}"}]
                 result["vendor_credits"].append({
-                    "vendor_name":         party_name,
+                    "vendor_name":          party_name,
                     "vendor_credit_number": vch_no,
-                    "vendor_credit_date":  date_fmt,
-                    "line_items":          line_items,
-                    "cgst":                f"{cgst:.2f}",
-                    "sgst":                f"{sgst:.2f}",
-                    "total_amount":        grand_total,
+                    "vendor_credit_date":   date_fmt,
+                    "line_items":           line_items,
+                    "cgst":                 f"{cgst:.2f}",
+                    "sgst":                 f"{sgst:.2f}",
+                    "total_amount":         grand_total,
                 })
                 log.debug(f"[VOUCHER] ✅ DEBIT NOTE #{vch_no} | {party_name} | {grand_total}")
 
@@ -1096,7 +970,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                     except ValueError:
                         amt = 0.0
                     if ln:
-                        # Tally: negative = debit, positive = credit
                         journal_lines.append({
                             "account_name": ln,
                             "debit":  f"{abs(amt):.2f}" if amt < 0 else "0.00",
@@ -1118,7 +991,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
                 unmatched[vch_type_raw] = unmatched.get(vch_type_raw, 0) + 1
                 log.warning(f"[VOUCHER] ⚠️ UNMATCHED type='{vch_type_raw}' #{vch_no} | {party_name}")
 
-        # Summary
         log.info(f"[PARSE] VOUCHER SUMMARY:")
         log.info(f"  Invoices:      {len(result['invoices'])}")
         log.info(f"  Receipts:      {len(result['receipts'])}")
@@ -1146,8 +1018,6 @@ def parse_all_vouchers(xml_data, from_date="", to_date="", ledger_parent_map=Non
 
 def get_tally_data(tally_request_xml, label="data"):
     log.info(f"[FETCH] Requesting {label} from Tally...")
-    # BUG FIX #6: Day Book XML is 12MB+ — 30s timeout is too short.
-    # Use 120s for Day Book, 30s for all other requests.
     timeout = 120 if label == "DAY BOOK" else 30
     try:
         response = requests.post(
@@ -1219,16 +1089,6 @@ def send_invoices_to_django(invoices):
     skipped = len(invoices) - len(valid)
     if skipped:
         log.warning(f"[SEND] ⚠️ INVOICES: {skipped} skipped (missing customer/number/date)")
-        for i in invoices:
-            if (i.get("customer_name") in [None, "", "Unknown"] or
-                    i.get("invoice_number") in [None, ""] or
-                    not i.get("invoice_date")):
-                log.warning(
-                    f"[SEND] Skipped invoice detail: "
-                    f"customer='{i.get('customer_name')}' | "
-                    f"number='{i.get('invoice_number')}' | "
-                    f"date='{i.get('invoice_date')}'"
-                )
     if not valid:
         log.warning("[SEND] ⚠️ No valid invoices to send")
         return False
@@ -1315,9 +1175,9 @@ def sync_data():
 
         xml_coa = get_tally_data(TALLY_REQUEST_XML_COA, "COA")
         accounts = parse_coa_ledgers(xml_coa)
-        ledger_parent_map = build_ledger_parent_map(xml_coa)
 
-        xml_items = get_tally_data(TALLY_REQUEST_XML_ITEMS, "ITEMS")
+        # Two-step item fetch: names first, then individual GST details
+        xml_items = get_tally_data(get_all_item_names_xml(), "ITEMS")
         items = parse_items(xml_items)
 
         xml_taxes = get_tally_data(TALLY_REQUEST_XML_TAXES, "TAXES")
@@ -1334,7 +1194,8 @@ def sync_data():
         root.update()
 
         xml_daybook = get_tally_data(get_daybook_xml(from_date, to_date), "DAY BOOK")
-        all_vouchers = parse_all_vouchers(xml_daybook, from_date, to_date, ledger_parent_map)   
+        all_vouchers = parse_all_vouchers(xml_daybook, from_date, to_date)
+
         invoices       = all_vouchers["invoices"]
         receipts       = all_vouchers["receipts"]
         bills          = all_vouchers["bills"]
@@ -1366,16 +1227,28 @@ def sync_data():
         log.info("SYNC COMPLETE")
         log.info("=" * 60)
 
-        messagebox.showinfo("Success", f"Sync complete!\n\nFetched:\n"
-                            f"  Invoices: {len(invoices)}\n"
-                            f"  Bills: {len(bills)}\n"
-                            f"  Receipts: {len(receipts)}\n"
-                            f"  Payments: {len(payments)}\n"
-                            f"  Credit Notes: {len(credit_notes)}\n"
-                            f"  Vendor Credits: {len(vendor_credits)}\n"
-                            f"  Journals: {len(journals)}\n"
-                            f"  Expenses: {len(expenses)}\n\n"
-                            f"Log saved to: {log_file}")
+        messagebox.showinfo("Success", f"""Sync complete!
+
+Masters:
+  Customers:        {len(customers)}
+  Vendors:          {len(vendors)}
+  Accounts:         {len(accounts)}
+  Items:            {len(items)}
+  Taxes:            {len(taxes)}
+  Opening Balances: {len(opening_balances)}
+
+Transactions:
+  Invoices:         {len(invoices)}
+  Bills:            {len(bills)}
+  Receipts:         {len(receipts)}
+  Payments:         {len(payments)}
+  Credit Notes:     {len(credit_notes)}
+  Vendor Credits:   {len(vendor_credits)}
+  Journals:         {len(journals)}
+  Expenses:         {len(expenses)}
+
+Log saved to: {log_file}""")
+
         status_label.config(text="✅ Sync complete!", fg="green")
 
     except Exception as e:
@@ -1383,6 +1256,7 @@ def sync_data():
         log.error(f"[SYNC] ❌ SYNC FAILED:\n{error_details}")
         messagebox.showerror("Sync Failed", f"{str(e)}\n\nCheck log file:\n{log_file}")
         status_label.config(text=f"❌ {str(e)}", fg="red")
+
 
 # ---- TEMPORARY TEST — remove after verification ----
 if __name__ == "__main__" and "--test-collection" in sys.argv:
@@ -1439,6 +1313,36 @@ def login_and_sync():
 sync_btn = tk.Button(root, text="Login & Sync", command=login_and_sync,
                      font=("Arial", 12), bg="green", fg="white")
 sync_btn.pack(pady=20)
+
+def sync_items_only():
+    username = username_var.get()
+    password = password_var.get()
+    if not username or not password:
+        messagebox.showwarning("Missing Fields", "Username and password are required.")
+        return
+    if not get_token(username, password):
+        messagebox.showerror("Login Failed", "Invalid credentials or server error.")
+        return
+    try:
+        status_label.config(text="Fetching items from Tally...", fg="blue")
+        root.update()
+        # Two-step: get names first, then fetch each individually
+        xml_items = get_tally_data(get_all_item_names_xml(), "ITEMS")
+        items = parse_items(xml_items)
+        if items:
+            send_items_to_django(items)
+        log.info(f"[SYNC] Items only sync complete — {len(items)} items")
+        messagebox.showinfo("Success", f"Items sync complete!\n\nItems fetched: {len(items)}\n\nLog: {log_file}")
+        status_label.config(text=f"✅ {len(items)} items synced!", fg="green")
+    except Exception as e:
+        error_details = traceback.format_exc()
+        log.error(f"[SYNC] ❌ Items sync failed:\n{error_details}")
+        messagebox.showerror("Failed", str(e))
+        status_label.config(text=f"❌ {str(e)}", fg="red")
+
+items_btn = tk.Button(root, text="Sync Items Only", command=sync_items_only,
+                      font=("Arial", 10), bg="#1c64f2", fg="white")
+items_btn.pack(pady=4)
 
 status_label = tk.Label(root, text="", font=("Arial", 10))
 status_label.pack()
