@@ -3,7 +3,7 @@ import './Setup.css';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-const ZOHO_AUTH_URL = 'https://accounts.zoho.in/oauth/v2/auth';
+const ZOHO_AUTH_URL = 'https://accounts.zoho.com/oauth/v2/auth';
 const REDIRECT_URI  = 'http://localhost:3000/setup';
 const DJANGO_BASE   = 'http://127.0.0.1:8000';
 
@@ -14,6 +14,8 @@ const SyncDataFlow = () => {
   const [tokenLoading, setTokenLoading]     = useState(false);
   const [snackbarAlert, setSnackbarAlert]   = useState({ show: false, message: '', type: 'error' });
 
+  const codeExchangeStarted = React.useRef(false);
+
   const [formData, setFormData] = useState({
     client_id:       '',
     client_secret:   '',
@@ -22,11 +24,17 @@ const SyncDataFlow = () => {
     organization_id: '',
   });
 
+  
   // ─── On mount: check if Zoho redirected back with ?code= ───────────────────
   useEffect(() => {
+    // StrictMode runs this effect twice in development — only act once.
+    if (codeExchangeStarted.current) return;
+
     const params = new URLSearchParams(window.location.search);
     const code   = params.get('code');
     if (!code) return;
+
+    codeExchangeStarted.current = true;
 
     // Clean the code out of the URL immediately so a refresh doesn't re-trigger
     window.history.replaceState({}, document.title, '/setup');

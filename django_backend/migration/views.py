@@ -100,43 +100,7 @@ def _refresh_zoho_token(config):
 
     raise ValueError(f"Failed to refresh Zoho token: {data.get('error', 'Unknown error')}")
 
-def _exchange_zoho_code_for_tokens(client_id, client_secret, code, redirect_uri):
-    """
-    Custom function: exchanges a one-time Zoho authorization code for
-    access_token + refresh_token. Tries India DC first, then Global DC,
-    since a client's org may live on either.
-    """
-    last_error = 'Unknown error'
-    for token_url in [
-        'https://accounts.zoho.in/oauth/v2/token',
-        'https://accounts.zoho.com/oauth/v2/token',
-    ]:
-        try:
-            resp = req.post(
-                token_url,
-                params={
-                    'grant_type':    'authorization_code',
-                    'client_id':     client_id,
-                    'client_secret': client_secret,
-                    'redirect_uri':  redirect_uri,
-                    'code':          code,
-                },
-                timeout=15,
-            )
-            data = resp.json()
-        except req.exceptions.Timeout:
-            last_error = 'Request to Zoho timed out.'
-            continue
-        except Exception as e:
-            last_error = str(e)
-            continue
 
-        if 'access_token' in data and 'refresh_token' in data:
-            return data['access_token'], data['refresh_token']
-
-        last_error = data.get('error', last_error)
-
-    raise ValueError(f"Zoho returned an error: {last_error}. The code may have expired — please try again.")
 
 def _zoho_headers(access_token):
     return {
@@ -2703,33 +2667,50 @@ def exchange_zoho_code(request):
     code          = (body.get('code')          or '').strip()
     redirect_uri  = (body.get('redirect_uri')  or '').strip()
 
+    print(f"[ZohoExchange] RECEIVED — client_id={'SET' if client_id else 'MISSING'} "
+          f"client_secret={'SET' if client_secret else 'MISSING'} "
+          f"code={'SET' if code else 'MISSING'} "
+          f"redirect_uri={redirect_uri or 'MISSING'}")
+
     if not all([client_id, client_secret, code, redirect_uri]):
         return JsonResponse(
             {'error': 'client_id, client_secret, code, and redirect_uri are all required.'},
             status=400,
         )
 
-    try:
-        response = req.post(
-            'https://accounts.zoho.in/oauth/v2/token',
-            params={
-                'grant_type':    'authorization_code',
-                'client_id':     client_id,
-                'client_secret': client_secret,
-                'redirect_uri':  redirect_uri,
-                'code':          code,
-            },
-            timeout=15,
-        )
-        data = response.json()
-    except req.exceptions.Timeout:
-        return JsonResponse({'error': 'Request to Zoho timed out. Please try again.'}, status=504)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    last_error = 'Unknown error'
+    data = {}
+    for token_url in ['https://accounts.zoho.com/oauth/v2/token',
+                       'https://accounts.zoho.in/oauth/v2/token']:
+        try:
+            response = req.post(
+                token_url,
+                params={
+                    'grant_type':    'authorization_code',
+                    'client_id':     client_id,
+                    'client_secret': client_secret,
+                    'redirect_uri':  redirect_uri,
+                    'code':          code,
+                },
+                timeout=15,
+            )
+            data = response.json()
+        except req.exceptions.Timeout:
+            last_error = 'Request to Zoho timed out.'
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
 
-    if 'error' in data:
+        if 'access_token' in data and 'refresh_token' in data:
+            break  # success — stop trying other domains
+
+        last_error = data.get('error', last_error)
+        print(f"[ZohoExchange] {token_url} rejected the code — full response: {data}")
+
+    if 'access_token' not in data or 'refresh_token' not in data:
         return JsonResponse(
-            {'error': f"Zoho returned an error: {data['error']}. The code may have expired — please try again."},
+            {'error': f"Zoho returned an error: {last_error}. The code may have expired — please try again."},
             status=400,
         )
 
