@@ -332,7 +332,7 @@ const Dashboard = () => {
           }}>
             <h4 style={{ marginTop: 0, color: '#495057' }}>🔧 Debug Information</h4>
             <div><strong>Auth Token:</strong> {sessionStorage.getItem('authToken') ? 'Present' : 'Missing'}</div>
-            <div><strong>Endpoint:</strong> api/data-migration-status/</div>
+            <div><strong>Endpoint:</strong> api/migration-status/</div>
             <div><strong>Current Data:</strong></div>
             <pre style={{ background: '#e9ecef', padding: '8px', borderRadius: '4px', fontSize: '12px' }}>
               {JSON.stringify(dashboardData, null, 2)}
