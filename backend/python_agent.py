@@ -20,7 +20,7 @@ AUTH_TOKEN = None
 
 DEFAULT_CONFIG = {
     "tally_url": "http://localhost:9000",
-    "auth_url": "http://localhost:8000/api/generate_token_agent/",
+    "auth_url": "http://localhost:8000/api/agent-token/",
     "django_api_url": "http://localhost:8000/api/users/ledgers/",
     "django_url_vendors": "http://localhost:8000/api/users/vendors/",
     "django_url_accounts": "http://localhost:8000/api/users/accounts/",
@@ -1314,35 +1314,6 @@ sync_btn = tk.Button(root, text="Login & Sync", command=login_and_sync,
                      font=("Arial", 12), bg="green", fg="white")
 sync_btn.pack(pady=20)
 
-def sync_items_only():
-    username = username_var.get()
-    password = password_var.get()
-    if not username or not password:
-        messagebox.showwarning("Missing Fields", "Username and password are required.")
-        return
-    if not get_token(username, password):
-        messagebox.showerror("Login Failed", "Invalid credentials or server error.")
-        return
-    try:
-        status_label.config(text="Fetching items from Tally...", fg="blue")
-        root.update()
-        # Two-step: get names first, then fetch each individually
-        xml_items = get_tally_data(get_all_item_names_xml(), "ITEMS")
-        items = parse_items(xml_items)
-        if items:
-            send_items_to_django(items)
-        log.info(f"[SYNC] Items only sync complete — {len(items)} items")
-        messagebox.showinfo("Success", f"Items sync complete!\n\nItems fetched: {len(items)}\n\nLog: {log_file}")
-        status_label.config(text=f"✅ {len(items)} items synced!", fg="green")
-    except Exception as e:
-        error_details = traceback.format_exc()
-        log.error(f"[SYNC] ❌ Items sync failed:\n{error_details}")
-        messagebox.showerror("Failed", str(e))
-        status_label.config(text=f"❌ {str(e)}", fg="red")
-
-items_btn = tk.Button(root, text="Sync Items Only", command=sync_items_only,
-                      font=("Arial", 10), bg="#1c64f2", fg="white")
-items_btn.pack(pady=4)
 
 status_label = tk.Label(root, text="", font=("Arial", 10))
 status_label.pack()
@@ -1354,3 +1325,4 @@ footer = tk.Label(root, text="Tally2Books Sync Agent v2.0", font=("Arial", 8), f
 footer.pack(side="bottom")
 
 root.mainloop()
+
