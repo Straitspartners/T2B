@@ -13,7 +13,7 @@ const transform = (list) =>
 
 export default function ChartofAccounts() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('coadashboard', transform, 'all_ledgers');
+    useDashboard('dashboard/accounts', transform, 'all_ledgers');
 
   return (
     <DashboardPage title="Chart of Accounts" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh}>

@@ -24,7 +24,7 @@ const cardConfig = [
 
 export default function ManualJournals() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('journaldashboard', transform, 'all_journals');
+    useDashboard('dashboard/journals', transform, 'all_journals');
 
   return (
     <DashboardPage title="Manual Journals" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

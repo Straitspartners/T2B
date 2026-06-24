@@ -23,7 +23,7 @@ const cardConfig = [
 
 export default function CreditNotes() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('creditnotedashboard', transform, 'all_credit_notes');
+    useDashboard('dashboard/credit-notes', transform, 'all_credit_notes');
 
   return (
     <DashboardPage title="Credit Notes" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

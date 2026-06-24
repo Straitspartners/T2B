@@ -18,7 +18,7 @@ const transform = (list) =>
 
 export default function Customers() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('customerdashboard', transform, 'all_ledgers');
+    useDashboard('dashboard/customers', transform, 'all_ledgers');
 
   return (
     <DashboardPage title="Customers" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh}>

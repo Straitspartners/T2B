@@ -25,7 +25,7 @@ const cardConfig = [
 
 export default function Items() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('itemsdashboard', transform, 'all_items');
+    useDashboard('dashboard/items', transform, 'all_items');
 
   return (
     <DashboardPage title="Items" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

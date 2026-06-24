@@ -45,7 +45,7 @@ const Dashboard = () => {
       const authToken = localStorage.getItem('authToken');
       if (!authToken) return;
 
-      const response = await fetch('https://tallytobooks-backend-bnezgff5eehsftfj.centralindia-01.azurewebsites.net/api/users/me/', {
+      const response = await fetch('http://127.0.0.1:8000/api/users/me/', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -122,7 +122,7 @@ const Dashboard = () => {
       }
 
       // Use the correct endpoint that matches your API structure
-      const endpoint = 'http://127.0.0.1:8000/api/data-migration-status/';
+      const endpoint = 'http://127.0.0.1:8000/api/migration-status/';
 
       console.log(`Fetching from endpoint: ${endpoint}`);
 

@@ -25,7 +25,7 @@ const cardConfig = [
 
 export default function Expenses() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('expensedashboard', transform, 'all_expenses');
+    useDashboard('dashboard/expenses', transform, 'all_expenses');
 
   return (
     <DashboardPage title="Expenses" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

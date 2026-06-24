@@ -24,7 +24,7 @@ const cardConfig = [
 
 export default function Bills() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('billdashboard', transform, 'all_bills');
+    useDashboard('dashboard/bills', transform, 'all_bills');
 
   return (
     <DashboardPage title="Bills" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

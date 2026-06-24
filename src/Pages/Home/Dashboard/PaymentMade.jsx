@@ -26,7 +26,7 @@ const cardConfig = [
 
 export default function PaymentMade() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('paymentmadedashboard', transform, 'all_payments');
+    useDashboard('dashboard/payments-made', transform, 'all_payments');
 
   return (
     <DashboardPage title="Payment Made" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

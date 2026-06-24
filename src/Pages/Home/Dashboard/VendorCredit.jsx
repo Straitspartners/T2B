@@ -23,7 +23,7 @@ const cardConfig = [
 
 export default function VendorCredit() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('vendorcreditdashboard', transform, 'all_vendor_credits');
+    useDashboard('dashboard/vendor-credits', transform, 'all_vendor_credits');
 
   return (
     <DashboardPage title="Vendor Credit" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

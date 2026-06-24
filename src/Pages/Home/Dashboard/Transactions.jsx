@@ -19,7 +19,7 @@ function Transactions() {
       const authToken = localStorage.getItem('authToken');
       if (!authToken) throw new Error('Authentication token not found. Please login again.');
 
-      const response = await fetch('http://127.0.0.1:8000/api/transactions/', {
+      const response = await fetch('http://127.0.0.1:8000/api/get-transactions/', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

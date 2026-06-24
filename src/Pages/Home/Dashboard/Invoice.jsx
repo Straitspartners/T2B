@@ -24,7 +24,7 @@ const cardConfig = [
 
 export default function Invoice() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('invoicedashboard', transform, 'all_invoices');
+    useDashboard('dashboard/invoices', transform, 'all_invoices');
 
   return (
     <DashboardPage title="Invoices" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

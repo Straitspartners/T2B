@@ -29,7 +29,7 @@ const cardConfig = [
 
 export default function PaymentReceived() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('receiptdashboard', transform, 'all_receipts');
+    useDashboard('dashboard/receipts', transform, 'all_receipts');
 
   return (
     <DashboardPage title="Payment Received" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh} cardConfig={cardConfig}>

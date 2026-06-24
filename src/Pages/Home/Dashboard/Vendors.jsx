@@ -18,8 +18,7 @@ const transform = (list) =>
 
 export default function Vendors() {
   const { stats, tableData, isLoading, alert, hideAlert, refresh } =
-    useDashboard('vendordashboard', transform, 'all_ledgers');
-
+    useDashboard('dashboard/vendors', transform, 'all_ledgers');
   return (
     <DashboardPage title="Vendors" stats={stats} alert={alert} onHideAlert={hideAlert} onRefresh={refresh}>
       <div className="content-grid-dashboard" style={{ gridTemplateColumns: '1fr' }}>

@@ -51,7 +51,7 @@ const AuthPage = ({ initialMode = "signin" }) => {
       }
 
       const response = await axios.post(
-        `${BACKEND_URL}/api/signin/`,  // ✅ Updated URL
+      `${BACKEND_URL}/api/login/`,
         {
           email: signInForm.email.trim(),
           password: signInForm.password,
@@ -69,6 +69,7 @@ if (token) {
 }
 if (name) {
     localStorage.setItem("userData", JSON.stringify({ name: name }));
+    localStorage.setItem("userName", name);
 }
 
       navigate("/dashboard");
@@ -112,10 +113,15 @@ if (name) {
       console.log("SIGNUP RESPONSE:", response.data);
 
       const token = response.data?.token;
+      const name = response.data?.name;
 
       if (token) {
-        localStorage.setItem("authToken", token);
-        console.log("✅ Signup token saved!");
+          localStorage.setItem("authToken", token);
+          console.log("✅ Signup token saved!");
+      }
+      if (name) {
+          localStorage.setItem("userData", JSON.stringify({ name: name }));
+          localStorage.setItem("userName", name);
       }
 
       navigate("/setup");
