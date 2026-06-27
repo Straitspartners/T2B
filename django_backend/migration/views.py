@@ -21,7 +21,32 @@ _sync_store = {
 }
 
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "your_secret_key_here_minimum_32_characters_long")
-ZOHO_BOOKS_BASE = "https://www.zohoapis.com/books/v3"
+
+# Fallback default — only used if a ZohoConfig row has no api_base_url saved yet
+# (e.g. rows created before this region-aware fix). New rows always get the
+# real working base URL saved by exchange_zoho_code / connect_zoho.
+DEFAULT_ZOHO_BOOKS_BASE = "https://www.zohoapis.com/books/v3"
+
+# Matching accounts-server domains, keyed by the books API domain we tried.
+# Used so token refresh hits the SAME data center the access token was
+# actually issued from — refreshing against the wrong DC silently fails.
+ZOHO_ACCOUNTS_DOMAIN_FOR_API = {
+    "https://www.zohoapis.com/books/v3": "https://accounts.zoho.com",
+    "https://www.zohoapis.in/books/v3":  "https://accounts.zoho.in",
+    "https://www.zohoapis.eu/books/v3":  "https://accounts.zoho.eu",
+    "https://www.zohoapis.com.au/books/v3": "https://accounts.zoho.com.au",
+}
+
+
+def _books_base(config):
+    """Returns the correct Zoho Books API base URL for this specific config row."""
+    return config.api_base_url or DEFAULT_ZOHO_BOOKS_BASE
+
+
+def _accounts_base(config):
+    """Returns the correct Zoho Accounts (OAuth) base URL matching this config's region."""
+    base = _books_base(config)
+    return ZOHO_ACCOUNTS_DOMAIN_FOR_API.get(base, "https://accounts.zoho.com")
 
 
 # ---------------- LOG HELPERS ----------------
@@ -118,7 +143,8 @@ def _get_zoho_config(user_email):
         raise ValueError('Zoho Books is not connected. Please connect via the settings page.')
 
 def _refresh_zoho_token(config):
-    resp = req.post('https://accounts.zoho.com/oauth/v2/token', params={'refresh_token': config.refresh_token, 'client_id': config.client_id, 'client_secret': config.client_secret, 'grant_type': 'refresh_token'})
+    accounts_base = _accounts_base(config)
+    resp = req.post(f'{accounts_base}/oauth/v2/token', params={'refresh_token': config.refresh_token, 'client_id': config.client_id, 'client_secret': config.client_secret, 'grant_type': 'refresh_token'})
     data = resp.json()
     if 'access_token' not in data:
         raise ValueError(f"Failed to refresh Zoho token: {data.get('error', 'Unknown error')}")
@@ -152,7 +178,8 @@ def _zoho_put(url, payload, config):
 
 def _find_existing_contact(name, contact_type, config):
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}&contact_name={name}&contact_type={contact_type}", config)
+    base = _books_base(config)
+    resp = _zoho_get(f"{base}/contacts?organization_id={org}&contact_name={name}&contact_type={contact_type}", config)
     if resp.status_code == 200:
         contacts = resp.json().get('contacts', [])
         if contacts:
@@ -160,17 +187,27 @@ def _find_existing_contact(name, contact_type, config):
     return None
 
 def _find_existing_account(name, config):
+    """
+    Uses Zoho's server-side account_name_contains search filter instead of
+    paginating through the entire chart of accounts — same pattern as
+    contacts/items, and avoids missing matches on orgs with 200+ accounts.
+    """
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", config)
+    base = _books_base(config)
+    name_lower = name.strip().lower()
+    import urllib.parse
+    encoded_name = urllib.parse.quote(name)
+    resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}&account_name_contains={encoded_name}", config)
     if resp.status_code == 200:
         for acct in resp.json().get('chartofaccounts', []):
-            if acct.get('account_name', '').strip().lower() == name.strip().lower():
+            if acct.get('account_name', '').strip().lower() == name_lower:
                 return acct['account_id']
     return None
 
 def _find_existing_item(name, config):
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/items?organization_id={org}&name={name}", config)
+    base = _books_base(config)
+    resp = _zoho_get(f"{base}/items?organization_id={org}&name={name}", config)
     if resp.status_code == 200:
         for item in resp.json().get('items', []):
             if item.get('name', '').strip().lower() == name.strip().lower():
@@ -179,7 +216,8 @@ def _find_existing_item(name, config):
 
 def _build_zoho_tax_map(config):
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}", config)
+    base = _books_base(config)
+    resp = _zoho_get(f"{base}/settings/taxes?organization_id={org}", config)
     tax_map = {}
     if resp.status_code == 200:
         for t in resp.json().get('taxes', []):
@@ -188,7 +226,8 @@ def _build_zoho_tax_map(config):
 
 def _build_zoho_account_map(config):
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", config)
+    base = _books_base(config)
+    resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}", config)
     account_map = {}
     if resp.status_code == 200:
         for a in resp.json().get('chartofaccounts', []):
@@ -303,6 +342,11 @@ def generate_agent_token(request):
 
 @csrf_exempt
 def connect_zoho(request):
+    """
+    Manual-paste connect path. Tries .com first, falls back to .in if .com
+    rejects the token — same region-detection pattern as exchange_zoho_code,
+    so a manually pasted .in token also gets the correct api_base_url saved.
+    """
     if request.method == 'POST':
         try:
             payload = verify_token(request)
@@ -317,12 +361,110 @@ def connect_zoho(request):
         organization_id = data.get('organization_id')
         if not all([client_id, client_secret, access_token, refresh_token, organization_id]):
             return JsonResponse({'error': 'All Zoho credentials are required'}, status=400)
-        test_response = req.get('https://www.zohoapis.com/books/v3/organizations', headers={'Authorization': f'Zoho-oauthtoken {access_token}'})
-        if test_response.status_code != 200:
-            return JsonResponse({'error': 'Invalid Zoho credentials.', 'zoho_response': test_response.json()}, status=400)
-        ZohoConfig.objects.update_or_create(user_email=payload.get('email'), defaults={'client_id': client_id, 'client_secret': client_secret, 'access_token': access_token, 'refresh_token': refresh_token, 'organization_id': organization_id})
+
+        working_base = None
+        last_zoho_response = None
+        for candidate_base in ZOHO_ACCOUNTS_DOMAIN_FOR_API.keys():
+            test_response = req.get(f'{candidate_base}/organizations', headers={'Authorization': f'Zoho-oauthtoken {access_token}'})
+            try:
+                last_zoho_response = test_response.json()
+            except Exception:
+                last_zoho_response = {'error': test_response.text[:300]}
+            if test_response.status_code == 200:
+                working_base = candidate_base
+                break
+
+        if not working_base:
+            return JsonResponse({'error': 'Invalid Zoho credentials.', 'zoho_response': last_zoho_response}, status=400)
+
+        ZohoConfig.objects.update_or_create(user_email=payload.get('email'), defaults={'client_id': client_id, 'client_secret': client_secret, 'access_token': access_token, 'refresh_token': refresh_token, 'organization_id': organization_id, 'api_base_url': working_base})
         return JsonResponse({'message': 'Zoho Books connected successfully!'}, status=200)
     return JsonResponse({'error': 'Invalid request'}, status=400)
+
+
+@csrf_exempt
+def exchange_zoho_code(request):
+    """
+    Called by Setup.jsx after Zoho redirects back with ?code=...
+    Receives { client_id, client_secret, code, redirect_uri }
+    Exchanges the one-time code for access_token + refresh_token.
+    Tries both .com and .in token domains automatically, and records which
+    one actually worked so every later API call uses the correct region.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+
+    client_id     = (body.get('client_id')     or '').strip()
+    client_secret = (body.get('client_secret') or '').strip()
+    code          = (body.get('code')          or '').strip()
+    redirect_uri  = (body.get('redirect_uri')  or '').strip()
+
+    print(f"[ZohoExchange] RECEIVED — client_id={'SET' if client_id else 'MISSING'} "
+          f"client_secret={'SET' if client_secret else 'MISSING'} "
+          f"code={'SET' if code else 'MISSING'} "
+          f"redirect_uri={redirect_uri or 'MISSING'}")
+
+    if not all([client_id, client_secret, code, redirect_uri]):
+        return JsonResponse(
+            {'error': 'client_id, client_secret, code, and redirect_uri are all required.'},
+            status=400,
+        )
+
+    last_error = 'Unknown error'
+    data = {}
+    matched_books_base = None
+
+    # Try each accounts domain → if it accepts the code, also resolve the
+    # matching Books API base URL so we can save it for all future calls.
+    domain_pairs = [
+        ('https://accounts.zoho.com/oauth/v2/token', 'https://www.zohoapis.com/books/v3'),
+        ('https://accounts.zoho.in/oauth/v2/token',  'https://www.zohoapis.in/books/v3'),
+    ]
+
+    for token_url, books_base in domain_pairs:
+        try:
+            response = req.post(
+                token_url,
+                params={
+                    'grant_type':    'authorization_code',
+                    'client_id':     client_id,
+                    'client_secret': client_secret,
+                    'redirect_uri':  redirect_uri,
+                    'code':          code,
+                },
+                timeout=15,
+            )
+            data = response.json()
+        except req.exceptions.Timeout:
+            last_error = 'Request to Zoho timed out.'
+            continue
+        except Exception as e:
+            last_error = str(e)
+            continue
+
+        if 'access_token' in data and 'refresh_token' in data:
+            matched_books_base = books_base
+            break  # success — stop trying other domains
+
+        last_error = data.get('error', last_error)
+        print(f"[ZohoExchange] {token_url} rejected the code — full response: {data}")
+
+    if 'access_token' not in data or 'refresh_token' not in data:
+        return JsonResponse(
+            {'error': f"Zoho returned an error: {last_error}. The code may have expired — please try again."},
+            status=400,
+        )
+
+    return JsonResponse({
+        'access_token':  data['access_token'],
+        'refresh_token': data['refresh_token'],
+        'api_base_url':  matched_books_base,
+    })
 
 
 # ---------------- AGENT DATA RECEIVERS ----------------
@@ -749,6 +891,7 @@ ACCOUNT_TYPE_MAP = {
 def _push_customers(config, results):
     _log_section('customers')
     org = config.organization_id
+    base = _books_base(config)
     success, failed = 0, 0
     for c in Customer.objects.all():
         if c.zoho_id:
@@ -757,13 +900,13 @@ def _push_customers(config, results):
         payload = {'contact_name': name, 'contact_type': 'customer', 'email': c.email or '', 'phone': c.phone or '', 'billing_address': {'address': c.address or '', 'state': c.state or '', 'zip': c.pincode or '', 'country': c.country or 'India'}}
         existing_id = _find_existing_contact(name, 'customer', config)
         if existing_id:
-            resp = _zoho_put(f"{ZOHO_BOOKS_BASE}/contacts/{existing_id}?organization_id={org}", payload, config)
+            resp = _zoho_put(f"{base}/contacts/{existing_id}?organization_id={org}", payload, config)
             if resp.status_code in (200, 201):
                 c.mark_migrated(existing_id); success += 1; _log_ok('CUSTOMER', name, 'updated existing')
             else:
                 failed += 1; _log_fail('CUSTOMER', name, _zoho_error(resp))
         else:
-            resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}", payload, config)
+            resp = _zoho_post(f"{base}/contacts?organization_id={org}", payload, config)
             if resp.status_code in (200, 201):
                 c.mark_migrated(resp.json().get('contact', {}).get('contact_id', '')); success += 1; _log_ok('CUSTOMER', name)
             else:
@@ -774,6 +917,7 @@ def _push_customers(config, results):
 def _push_vendors(config, results):
     _log_section('vendors')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     for v in Vendor.objects.all():
         if v.zoho_id:
@@ -783,12 +927,12 @@ def _push_vendors(config, results):
         existing_id = _find_existing_contact(name, 'vendor', config)
         if existing_id:
             v.mark_migrated(existing_id); skipped += 1; _log_skip('VENDOR', name, 'exists in Zoho'); continue
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}", payload, config)
+        resp = _zoho_post(f"{base}/contacts?organization_id={org}", payload, config)
         if resp.status_code in (200, 201):
             v.mark_migrated(resp.json().get('contact', {}).get('contact_id', '')); success += 1; _log_ok('VENDOR', name)
         elif resp.status_code == 400 and resp.json().get('code') == 3062:
             import urllib.parse
-            search_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}&contact_name={urllib.parse.quote(name)}&contact_type=vendor", config)
+            search_resp = _zoho_get(f"{base}/contacts?organization_id={org}&contact_name={urllib.parse.quote(name)}&contact_type=vendor", config)
             if search_resp.status_code == 200:
                 contacts = search_resp.json().get('contacts', [])
                 if contacts:
@@ -802,6 +946,7 @@ def _push_vendors(config, results):
 def _push_accounts(config, results):
     _log_section('accounts')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     for account in Account.objects.all():
         if account.zoho_id:
@@ -811,7 +956,7 @@ def _push_accounts(config, results):
         existing_id = _find_existing_account(account.account_name, config)
         if existing_id:
             account.mark_migrated(existing_id); skipped += 1; _log_skip('ACCOUNT', account.account_name, 'exists in Zoho'); continue
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", {'account_name': account.account_name, 'account_type': zoho_type}, config)
+        resp = _zoho_post(f"{base}/chartofaccounts?organization_id={org}", {'account_name': account.account_name, 'account_type': zoho_type}, config)
         if resp.status_code in (200, 201):
             account.mark_migrated(resp.json().get('chart_of_account', {}).get('account_id', '')); success += 1; _log_ok('ACCOUNT', account.account_name, f'type={zoho_type}')
         else:
@@ -822,6 +967,7 @@ def _push_accounts(config, results):
 def _push_items(config, results):
     _log_section('items')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     for item in Item.objects.all():
         if item.zoho_id:
@@ -833,19 +979,28 @@ def _push_items(config, results):
             rate = float(item.rate or 0)
         except (ValueError, TypeError):
             rate = 0.0
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/items?organization_id={org}", {'name': item.name, 'rate': rate, 'description': item.description or '', 'sku': item.sku or '', 'unit': item.product_type or '', 'item_type': 'sales_and_purchases'}, config)
+
+        # Generate a fallback SKU if Tally didn't provide one (some orgs
+        # require a non-empty SKU on item creation)
+        sku = item.sku.strip() if item.sku else ''
+        if not sku:
+            sku = f"ITEM-{item.id}"
+
+        resp = _zoho_post(f"{base}/items?organization_id={org}", {'name': item.name, 'rate': rate, 'description': item.description or '', 'sku': sku, 'unit': item.product_type or '', 'item_type': 'sales_and_purchases'}, config)
         if resp.status_code in (200, 201):
-            item.mark_migrated(resp.json().get('item', {}).get('item_id', '')); success += 1; _log_ok('ITEM', item.name, f'rate={rate}')
+            item.mark_migrated(resp.json().get('item', {}).get('item_id', '')); success += 1; _log_ok('ITEM', item.name, f'rate={rate} sku={sku}')
         else:
             failed += 1; _log_fail('ITEM', item.name, _zoho_error(resp))
     results['items'] = {'success': success, 'failed': failed, 'skipped': skipped}
     _log_summary('ITEMS', success, failed, skipped)
 
+
 def _push_taxes(config, results):
     _log_section('taxes')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
-    check_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}", config)
+    check_resp = _zoho_get(f"{base}/settings/taxes?organization_id={org}", config)
     existing_tax_map = {}
     if check_resp.status_code == 200:
         for t in check_resp.json().get('taxes', []):
@@ -856,7 +1011,7 @@ def _push_taxes(config, results):
         match_id = existing_tax_map.get(tax.tax_name.strip().lower())
         if match_id:
             tax.mark_migrated(match_id); skipped += 1; _log_skip('TAX', tax.tax_name, 'exists in Zoho'); continue
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/settings/taxes?organization_id={org}", {'tax_name': tax.tax_name, 'tax_percentage': float(tax.tax_rate or 0), 'tax_type': 'tax', 'is_active': tax.is_active}, config)
+        resp = _zoho_post(f"{base}/settings/taxes?organization_id={org}", {'tax_name': tax.tax_name, 'tax_percentage': float(tax.tax_rate or 0), 'tax_type': 'tax', 'is_active': tax.is_active}, config)
         if resp.status_code in (200, 201):
             tax.mark_migrated(resp.json().get('tax', {}).get('tax_id', '')); success += 1; _log_ok('TAX', tax.tax_name, f'rate={tax.tax_rate}%')
         else:
@@ -869,7 +1024,8 @@ def _resolve_customer_id(customer_name, config):
     if db_customer and db_customer.zoho_id:
         return db_customer.zoho_id
     org = config.organization_id
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}&contact_name={customer_name}&contact_type=customer", config)
+    base = _books_base(config)
+    resp = _zoho_get(f"{base}/contacts?organization_id={org}&contact_name={customer_name}&contact_type=customer", config)
     if resp.status_code == 200:
         contacts = resp.json().get('contacts', [])
         if contacts:
@@ -887,8 +1043,9 @@ def _resolve_vendor_id(vendor_name, config):
 
 def _get_zoho_account_id(account_type, config):
     org = config.organization_id
+    base = _books_base(config)
     SKIP_KEYWORDS = ['prepaid', 'tds', 'receivable', 'advance', 'deposit', 'transit', 'goods in', 'wip', 'opening', 'suspense', 'clearing']
-    resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={account_type}", config)
+    resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}&account_type={account_type}", config)
     if resp.status_code == 200:
         accounts = resp.json().get('chartofaccounts', [])
         valid = [a for a in accounts if not any(kw in a.get('account_name', '').lower() for kw in SKIP_KEYWORDS)]
@@ -899,29 +1056,58 @@ def _get_zoho_account_id(account_type, config):
 def _push_invoices(config, results):
     _log_section('invoices')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     print(f"  Total in DB   : {Invoice.objects.count()}")
     sales_account_id = _get_zoho_account_id('income', config)
     print(f"  Sales acct ID : {sales_account_id or 'NOT FOUND'}")
+
+    # Cache item active/inactive status so we don't re-check the same
+    # item repeatedly across hundreds of invoices.
+    item_status_cache = {}
+
     for inv in Invoice.objects.prefetch_related('line_items').all():
         if inv.zoho_id:
             skipped += 1; _log_skip('INVOICE', f"#{inv.invoice_number} | {inv.customer_name}"); continue
+
         customer_id = _resolve_customer_id(inv.customer_name, config)
         if not customer_id:
             if inv.customer_name == "Cash Customer":
-                resp_c = _zoho_post(f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}", {'contact_name': 'Cash Customer', 'contact_type': 'customer'}, config)
+                resp_c = _zoho_post(f"{base}/contacts?organization_id={org}", {'contact_name': 'Cash Customer', 'contact_type': 'customer'}, config)
                 if resp_c.status_code in (200, 201):
                     customer_id = resp_c.json().get('contact', {}).get('contact_id', '')
                     Customer.objects.update_or_create(name='Cash Customer', defaults={'zoho_id': customer_id})
                     print(f"    ℹ️   Auto-created 'Cash Customer' → {customer_id}")
             if not customer_id:
                 failed += 1; _log_fail('INVOICE', f"#{inv.invoice_number}", f"customer '{inv.customer_name}' not found"); continue
+
         db_items = list(inv.line_items.all())
         if db_items:
             line_items = []
             for li in db_items:
-                item = {'name': li.item_name, 'description': li.item_name, 'rate': float(li.rate), 'quantity': float(li.qty_value), 'unit': li.qty_unit}
-                if sales_account_id:
+                item_record = Item.objects.filter(name=li.item_name).first()
+                use_item_id = False
+
+                if item_record and item_record.zoho_id:
+                    zid = item_record.zoho_id
+                    if zid not in item_status_cache:
+                        status_resp = _zoho_get(f"{base}/items/{zid}?organization_id={org}", config)
+                        if status_resp.status_code == 200 and status_resp.json().get('item', {}).get('status') == 'active':
+                            item_status_cache[zid] = True
+                        else:
+                            # Inactive (or fetch failed) — try to reactivate once
+                            activate_resp = _zoho_post(f"{base}/items/{zid}/active?organization_id={org}", {}, config)
+                            if activate_resp.status_code in (200, 201):
+                                print(f"    ℹ️   Reactivated inactive item '{item_record.name}'")
+                                item_status_cache[zid] = True
+                            else:
+                                item_status_cache[zid] = False
+                    use_item_id = item_status_cache.get(zid, False)
+
+                item = {'description': li.item_name, 'rate': float(li.rate), 'quantity': float(li.qty_value), 'unit': li.qty_unit}
+                if use_item_id:
+                    item['item_id'] = item_record.zoho_id
+                elif sales_account_id:
                     item['account_id'] = sales_account_id
                 line_items.append(item)
         else:
@@ -931,8 +1117,10 @@ def _push_invoices(config, results):
             if sales_account_id:
                 item['account_id'] = sales_account_id
             line_items = [item]
+
         payload = {'customer_id': customer_id, 'invoice_number': inv.invoice_number, 'date': str(inv.invoice_date) if inv.invoice_date else '', 'line_items': line_items}
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/invoices?organization_id={org}", payload, config)
+        resp = _zoho_post(f"{base}/invoices?organization_id={org}", payload, config)
+
         if resp.status_code in (200, 201):
             new_invoice_id = resp.json().get('invoice', {}).get('invoice_id', '')
             inv.zoho_id = new_invoice_id
@@ -942,7 +1130,7 @@ def _push_invoices(config, results):
             # Approve immediately so the invoice isn't stuck pending approval —
             # required before credit notes can be linked to it. Harmless no-op
             # if Sales Approval isn't enabled on this org.
-            approve_resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/invoices/{new_invoice_id}/approve?organization_id={org}", {}, config)
+            approve_resp = _zoho_post(f"{base}/invoices/{new_invoice_id}/approve?organization_id={org}", {}, config)
             if approve_resp.status_code not in (200, 201):
                 approve_err = _zoho_error(approve_resp)
                 if 'already' not in approve_err.lower() and 'not required' not in approve_err.lower():
@@ -950,53 +1138,42 @@ def _push_invoices(config, results):
 
             # Mark as sent so it's no longer in draft status — also required
             # for credit note linking (Zoho error 12055).
-            sent_resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/invoices/{new_invoice_id}/status/sent?organization_id={org}", {}, config)
+            sent_resp = _zoho_post(f"{base}/invoices/{new_invoice_id}/status/sent?organization_id={org}", {}, config)
             if sent_resp.status_code not in (200, 201):
                 print(f"    ⚠️   Could not mark invoice {inv.invoice_number} as sent: {_zoho_error(sent_resp)}")
 
             success += 1; _log_ok('INVOICE', f"#{inv.invoice_number} | {inv.customer_name}", f"₹{inv.total_amount}")
         else:
             failed += 1; _log_fail('INVOICE', f"#{inv.invoice_number} | {inv.customer_name}", _zoho_error(resp))
+
     results['invoices'] = {'success': success, 'failed': failed, 'skipped': skipped}
     _log_summary('INVOICES', success, failed, skipped)
 
 # ---------------------MARK INVOICES AS APPROVED-------------------------
 
 def _mark_invoices_approved_in_zoho(config):
-    """
-    Mark all pushed invoices as 'approved' in Zoho Books.
-    This prevents them from being in draft state.
-    """
+    """Mark all pushed invoices as 'approved' in Zoho Books."""
     from migration.models import Invoice
-    
+
     org = config.organization_id
+    base = _books_base(config)
     approved_count = 0
     failed_count = 0
-    
+
     print("\n" + "="*100)
     print("📌 MARKING INVOICES AS APPROVED IN ZOHO")
     print("="*100)
-    
-    # Get all invoices that have been pushed (have zoho_id)
+
     pushed_invoices = Invoice.objects.exclude(zoho_id='').exclude(zoho_id__isnull=True)
-    
     print(f"\nTotal pushed invoices: {pushed_invoices.count()}")
-    
+
     for invoice in pushed_invoices:
-        # Try to mark as approved using Zoho API
-        # Endpoint: PUT /invoices/{invoice_id}/mark_as_approved
-        
-        payload = {}  # Zoho mark_as_approved endpoint usually takes empty payload
-        
         resp = _zoho_post(
-            f"{ZOHO_BOOKS_BASE}/invoices/{invoice.zoho_id}/approve?organization_id={org}",
+            f"{base}/invoices/{invoice.zoho_id}/approve?organization_id={org}",
             {},
             config
         )
 
-        print(resp.status_code)
-        print(resp.text)
-        
         if resp.status_code in (200, 201):
             approved_count += 1
             print(f"  ✅ {invoice.invoice_number} ({invoice.zoho_id}) - APPROVED")
@@ -1004,11 +1181,11 @@ def _mark_invoices_approved_in_zoho(config):
             failed_count += 1
             error = _zoho_error(resp)
             print(f"  ❌ {invoice.invoice_number} - {error}")
-    
+
     print("\n" + "="*100)
     print(f"✅ APPROVED: {approved_count} | ❌ FAILED: {failed_count}")
     print("="*100 + "\n")
-    
+
     return {'approved': approved_count, 'failed': failed_count}
 
 
@@ -1016,36 +1193,35 @@ def _mark_invoices_approved_in_zoho(config):
 def approve_invoices_in_zoho(request):
     """
     API Endpoint: POST /api/approve-invoices/
-    
     Marks all pushed invoices as 'approved' in Zoho Books.
-    Only works for invoices that have already been pushed (have zoho_id).
     """
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
-    
+
     try:
         config = ZohoConfig.objects.first()
         if not config:
             return JsonResponse({'error': 'Zoho config not found'}, status=400)
-        
+
         result = _mark_invoices_approved_in_zoho(config)
-        
+
         return JsonResponse({
             'status': 'success',
             'message': f"Marked {result['approved']} invoices as approved",
             'approved': result['approved'],
             'failed': result['failed']
         }, status=200)
-    
+
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-    
+
 # -----------------------------------------------------------------
 
 def _push_receipts(config, results):
     _log_section('receipts')
     org = config.organization_id
-    url = f"{ZOHO_BOOKS_BASE}/customerpayments?organization_id={org}"
+    base = _books_base(config)
+    url = f"{base}/customerpayments?organization_id={org}"
     success, failed, skipped = 0, 0, 0
     PAYMENT_MODE_MAP = {'cash': 'cash', 'cheque': 'check', 'check': 'check', 'neft': 'bank_transfer', 'rtgs': 'bank_transfer', 'imps': 'bank_transfer', 'upi': 'bank_transfer', 'credit card': 'creditcard', 'debit card': 'creditcard'}
     for rec in Receipt.objects.all():
@@ -1070,10 +1246,11 @@ def _push_receipts(config, results):
 def _push_bills(config, results):
     _log_section('bills')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     purchase_account_id = None
     for acct_type in ['cost_of_goods_sold', 'expense']:
-        acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type={acct_type}", config)
+        acct_resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}&account_type={acct_type}", config)
         if acct_resp.status_code == 200:
             accounts = acct_resp.json().get('chartofaccounts', [])
             if accounts:
@@ -1089,7 +1266,7 @@ def _push_bills(config, results):
         line_item = {'description': f'Bill {b.bill_number}', 'rate': float(b.amount or 0), 'quantity': 1}
         if purchase_account_id:
             line_item['account_id'] = purchase_account_id
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/bills?organization_id={org}", {'vendor_id': vendor_id, 'bill_number': str(b.bill_number) if b.bill_number else '', 'date': str(b.bill_date) if b.bill_date else '', 'line_items': [line_item]}, config)
+        resp = _zoho_post(f"{base}/bills?organization_id={org}", {'vendor_id': vendor_id, 'bill_number': str(b.bill_number) if b.bill_number else '', 'date': str(b.bill_date) if b.bill_date else '', 'line_items': [line_item]}, config)
         if resp.status_code in (200, 201):
             b.mark_migrated(resp.json().get('bill', {}).get('bill_id', ''))
             success += 1; _log_ok('BILL', f"#{b.bill_number} | {b.vendor_name}", f"₹{b.amount}")
@@ -1101,6 +1278,7 @@ def _push_bills(config, results):
 def _push_payments(config, results):
     _log_section('payments')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     import time
 
@@ -1113,8 +1291,6 @@ def _push_payments(config, results):
             continue
 
         if getattr(p, 'transaction_kind', 'payment') == 'transfer':
-            # Genuine bank-to-bank/cash transfer — structurally identified
-            # via Tally's PARENT classification, not name guessing.
             skipped += 1
             _log_skip('PAYMENT', f"#{p.payment_number}", f"true bank transfer: {p.vendor_name}")
             continue
@@ -1122,9 +1298,8 @@ def _push_payments(config, results):
         vendor_id = _resolve_vendor_id(p.vendor_name, config)
 
         if not vendor_id:
-            # Vendor genuinely missing in Zoho — create it instead of failing
             resp_v = _zoho_post(
-                f"{ZOHO_BOOKS_BASE}/contacts?organization_id={org}",
+                f"{base}/contacts?organization_id={org}",
                 {'contact_name': p.vendor_name, 'contact_type': 'vendor'},
                 config
             )
@@ -1147,7 +1322,7 @@ def _push_payments(config, results):
         }
 
         resp = _zoho_post(
-            f"{ZOHO_BOOKS_BASE}/vendorpayments?organization_id={org}",
+            f"{base}/vendorpayments?organization_id={org}",
             payload, config
         )
         if resp.status_code in (200, 201):
@@ -1170,10 +1345,11 @@ def _push_payments(config, results):
 
     results['payments'] = {'success': success, 'failed': failed, 'skipped': skipped}
     _log_summary('PAYMENTS', success, failed, skipped)
-    
+
 def _push_credit_notes(config, results):
     _log_section('credit notes')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
 
     sales_account_id = _get_zoho_account_id('income', config)
@@ -1191,7 +1367,6 @@ def _push_credit_notes(config, results):
             _log_fail('CREDIT NOTE', f"#{c.credit_note_number}", f"customer '{c.customer_name}' not found")
             continue
 
-        # ✅ MAP INVOICE NUMBER → ZOHO INVOICE ID
         zoho_invoice_id = None
         if c.invoice_number:
             matching_invoice = Invoice.objects.filter(
@@ -1223,14 +1398,13 @@ def _push_credit_notes(config, results):
             'line_items': [line_item],
         }
 
-        # ✅ USE ZOHO INVOICE ID IF FOUND
         if zoho_invoice_id:
             payload['invoice_id'] = zoho_invoice_id
         else:
             payload['invoice_type'] = 'sales_with_itemized_tax'
 
         resp = _zoho_post(
-            f"{ZOHO_BOOKS_BASE}/creditnotes?organization_id={org}",
+            f"{base}/creditnotes?organization_id={org}",
             payload, config
         )
         if resp.status_code in (200, 201):
@@ -1243,12 +1417,13 @@ def _push_credit_notes(config, results):
 
     results['credit_notes'] = {'success': success, 'failed': failed, 'skipped': skipped}
     _log_summary('CREDIT NOTES', success, failed, skipped)
-    
+
 def _push_vendor_credits(config, results):
     _log_section('vendor credits')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
-    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type=expense", config)
+    acct_resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}&account_type=expense", config)
     fallback_account_id = ''
     if acct_resp.status_code == 200:
         accounts = acct_resp.json().get('chartofaccounts', [])
@@ -1260,7 +1435,7 @@ def _push_vendor_credits(config, results):
         vendor_id = _resolve_vendor_id(v.vendor_name, config)
         if not vendor_id:
             failed += 1; _log_fail('VENDOR CREDIT', f"#{v.vendor_credit_number}", f"vendor '{v.vendor_name}' not found"); continue
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/vendorcredits?organization_id={org}", {'vendor_id': vendor_id, 'vendor_credit_number': str(v.vendor_credit_number) if v.vendor_credit_number else '', 'date': str(v.vendor_credit_date) if v.vendor_credit_date else '', 'line_items': [{'account_id': fallback_account_id, 'description': f'Vendor Credit {v.vendor_credit_number}', 'rate': float(v.amount or 0), 'quantity': 1}]}, config)
+        resp = _zoho_post(f"{base}/vendorcredits?organization_id={org}", {'vendor_id': vendor_id, 'vendor_credit_number': str(v.vendor_credit_number) if v.vendor_credit_number else '', 'date': str(v.vendor_credit_date) if v.vendor_credit_date else '', 'line_items': [{'account_id': fallback_account_id, 'description': f'Vendor Credit {v.vendor_credit_number}', 'rate': float(v.amount or 0), 'quantity': 1}]}, config)
         if resp.status_code in (200, 201):
             v.mark_migrated(resp.json().get('vendor_credit', {}).get('vendor_credit_id', ''))
             success += 1; _log_ok('VENDOR CREDIT', f"#{v.vendor_credit_number} | {v.vendor_name}", f"₹{v.amount}")
@@ -1272,10 +1447,11 @@ def _push_vendor_credits(config, results):
 def _push_journals(config, results):
     _log_section('journals')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     account_map = _build_zoho_account_map(config)
     print(f"  Account map   : {len(account_map)} entries")
-    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}&account_type=expense", config)
+    acct_resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}&account_type=expense", config)
     fallback_account_id = ''
     if acct_resp.status_code == 200:
         accts = acct_resp.json().get('chartofaccounts', [])
@@ -1312,7 +1488,7 @@ def _push_journals(config, results):
         if not journal_lines:
             amt = float(j.amount or 0)
             journal_lines = [{'account_id': fallback_account_id, 'description': f'Journal {j.voucher_number}', 'debit_or_credit': 'debit', 'amount': amt}, {'account_id': fallback_account_id, 'description': f'Journal {j.voucher_number}', 'debit_or_credit': 'credit', 'amount': amt}]
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/journals?organization_id={org}", {'journal_date': str(j.voucher_date) if j.voucher_date else '', 'notes': narration_text, 'line_items': journal_lines}, config)
+        resp = _zoho_post(f"{base}/journals?organization_id={org}", {'journal_date': str(j.voucher_date) if j.voucher_date else '', 'notes': narration_text, 'line_items': journal_lines}, config)
         if resp.status_code in (200, 201):
             j.mark_migrated(resp.json().get('journal', {}).get('journal_id', ''))
             success += 1; _log_ok('JOURNAL', f"#{j.voucher_number}", f"{str(narration_text)[:40]}")
@@ -1324,13 +1500,14 @@ def _push_journals(config, results):
 def _push_opening_balances(config, results):
     _log_section('opening balances')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     unpushed = OpeningBalance.objects.filter(is_pushed=False)
     if not unpushed.exists():
         results['opening_balances'] = {'success': 0, 'failed': 0, 'skipped': OpeningBalance.objects.count()}
         print("  ℹ️   Nothing to push — all already sent.")
         return
-    acct_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", config)
+    acct_resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}", config)
     if acct_resp.status_code != 200:
         results['opening_balances'] = {'success': 0, 'failed': unpushed.count(), 'skipped': 0}
         print(f"  ❌  Could not fetch Zoho COA"); return
@@ -1341,9 +1518,6 @@ def _push_opening_balances(config, results):
         if not zoho_account_id:
             skipped += 1; _log_skip('OPENING BAL', ob.ledger_name, 'no matching Zoho account'); continue
 
-        # Normalize sign: Zoho requires a positive amount with the correct
-        # debit_or_credit flag. A negative value stored under balance_type='debit'
-        # actually represents a credit balance (and vice versa) — flip accordingly.
         raw_amount = ob.opening_balance
         balance_type = ob.balance_type
         if raw_amount < 0:
@@ -1356,7 +1530,7 @@ def _push_opening_balances(config, results):
         ob_records.append((ob, zoho_account_id))
     if not accounts_payload:
         results['opening_balances'] = {'success': 0, 'failed': 0, 'skipped': skipped}; return
-    resp = _zoho_put(f"{ZOHO_BOOKS_BASE}/settings/openingbalances?organization_id={org}", {'accounts': accounts_payload}, config)
+    resp = _zoho_put(f"{base}/settings/openingbalances?organization_id={org}", {'accounts': accounts_payload}, config)
     if resp.status_code in (200, 201):
         for ob, zoho_account_id in ob_records:
             ob.zoho_account_id = zoho_account_id; ob.is_pushed = True
@@ -1371,16 +1545,13 @@ def _push_opening_balances(config, results):
 def _push_expenses(config, results, account_map=None):
     _log_section('expenses')
     org = config.organization_id
+    base = _books_base(config)
     success, failed, skipped = 0, 0, 0
     print(f"  Total in DB   : {Expense.objects.count()}")
 
     SKIP_KEYWORDS = ['tds', 'prepaid', 'receivable', 'advance', 'deposit', 'transit', 'opening', 'suspense', 'clearing']
 
-    # Fetch the FULL chart of accounts once, unfiltered — then classify
-    # client-side using the actual account_type field Zoho returns per record.
-    # (Zoho's ?account_type= query filter is unreliable for this org and
-    # returns almost everything regardless of the requested type.)
-    all_accounts_resp = _zoho_get(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", config)
+    all_accounts_resp = _zoho_get(f"{base}/chartofaccounts?organization_id={org}", config)
     all_accounts = all_accounts_resp.json().get('chartofaccounts', []) if all_accounts_resp.status_code == 200 else []
 
     if account_map is None:
@@ -1415,7 +1586,7 @@ def _push_expenses(config, results, account_map=None):
 
         account_id = account_map.get(exp.account_name.strip().lower())
         if not account_id:
-            create_resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/chartofaccounts?organization_id={org}", {'account_name': exp.account_name, 'account_type': 'expense'}, config)
+            create_resp = _zoho_post(f"{base}/chartofaccounts?organization_id={org}", {'account_name': exp.account_name, 'account_type': 'expense'}, config)
             if create_resp.status_code in (200, 201):
                 account_id = create_resp.json().get('chart_of_account', {}).get('account_id')
                 account_map[exp.account_name.strip().lower()] = account_id
@@ -1445,7 +1616,7 @@ def _push_expenses(config, results, account_map=None):
         if paid_through_id:
             payload['paid_through_account_id'] = paid_through_id
 
-        resp = _zoho_post(f"{ZOHO_BOOKS_BASE}/expenses?organization_id={org}", payload, config)
+        resp = _zoho_post(f"{base}/expenses?organization_id={org}", payload, config)
         if resp.status_code in (200, 201):
             exp.mark_migrated(resp.json().get('expense', {}).get('expense_id', ''))
             success += 1
@@ -1476,7 +1647,6 @@ def push_to_zoho(request):
             body = {}
         push_types = body.get('types', ['customers', 'vendors', 'accounts', 'items', 'taxes', 'invoices', 'receipts', 'bills', 'payments', 'credit_notes', 'vendor_credits', 'journals', 'opening_balances', 'expenses'])
 
-        # ── SYNCHRONOUS PUSH — no threading, runs inline ──────────────────────
         results = {}
         errors = []
 
@@ -1750,7 +1920,8 @@ def get_zoho_connection_status(request):
         user_email = payload.get('email')
         try:
             config = ZohoConfig.objects.get(user_email=user_email)
-            resp = req.get(f"{ZOHO_BOOKS_BASE}/organizations", headers={'Authorization': f'Zoho-oauthtoken {config.access_token}'})
+            base = _books_base(config)
+            resp = req.get(f"{base}/organizations", headers={'Authorization': f'Zoho-oauthtoken {config.access_token}'})
             if resp.status_code == 401:
                 _refresh_zoho_token(config); status = 'connected'
             else:
@@ -1818,82 +1989,9 @@ def clear_migration_data(request):
         Expense.objects.all().update(zoho_id=None, zoho_migrated_at=None)
         Account.objects.all().update(zoho_id=None, zoho_migrated_at=None)
         Item.objects.all().update(zoho_id=None, zoho_migrated_at=None)
-        # OpeningBalance.objects.all().update(is_pushed=False, zoho_account_id=None)
+        Tax.objects.all().update(zoho_id=None, zoho_migrated_at=None)
+        OpeningBalance.objects.all().update(is_pushed=False, zoho_account_id=None)
         Customer.objects.all().update(zoho_id=None)
         Vendor.objects.all().update(zoho_id=None)
         return JsonResponse({'message': 'All migration data cleared. You can re-sync now.'})
     return JsonResponse({'error': 'Invalid request'}, status=400)
-
-@csrf_exempt
-def exchange_zoho_code(request):
-    """
-    Called by Setup.jsx after Zoho redirects back with ?code=...
-    Receives { client_id, client_secret, code, redirect_uri }
-    Exchanges the one-time code for access_token + refresh_token.
-    Tries both .com and .in domains automatically.
-    """
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Invalid request'}, status=400)
-
-    try:
-        body = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'Invalid JSON body'}, status=400)
-
-    client_id     = (body.get('client_id')     or '').strip()
-    client_secret = (body.get('client_secret') or '').strip()
-    code          = (body.get('code')          or '').strip()
-    redirect_uri  = (body.get('redirect_uri')  or '').strip()
-
-    print(f"[ZohoExchange] RECEIVED — client_id={'SET' if client_id else 'MISSING'} "
-          f"client_secret={'SET' if client_secret else 'MISSING'} "
-          f"code={'SET' if code else 'MISSING'} "
-          f"redirect_uri={redirect_uri or 'MISSING'}")
-
-    if not all([client_id, client_secret, code, redirect_uri]):
-        return JsonResponse(
-            {'error': 'client_id, client_secret, code, and redirect_uri are all required.'},
-            status=400,
-        )
-
-   
-    last_error = 'Unknown error'
-    data = {}
-    for token_url in ['https://accounts.zoho.com/oauth/v2/token',
-                       'https://accounts.zoho.in/oauth/v2/token']:
-        try:
-            response = req.post(
-                token_url,
-                params={
-                    'grant_type':    'authorization_code',
-                    'client_id':     client_id,
-                    'client_secret': client_secret,
-                    'redirect_uri':  redirect_uri,
-                    'code':          code,
-                },
-                timeout=15,
-            )
-            data = response.json()
-        except req.exceptions.Timeout:
-            last_error = 'Request to Zoho timed out.'
-            continue
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-        if 'access_token' in data and 'refresh_token' in data:
-            break  # success — stop trying other domains
-
-        last_error = data.get('error', last_error)
-        print(f"[ZohoExchange] {token_url} rejected the code — full response: {data}")
-
-    if 'access_token' not in data or 'refresh_token' not in data:
-        return JsonResponse(
-            {'error': f"Zoho returned an error: {last_error}. The code may have expired — please try again."},
-            status=400,
-        )
-
-    return JsonResponse({
-        'access_token':  data['access_token'],
-        'refresh_token': data['refresh_token'],
-    })

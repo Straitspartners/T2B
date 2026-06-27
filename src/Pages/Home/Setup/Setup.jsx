@@ -3,7 +3,11 @@ import './Setup.css';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-const ZOHO_AUTH_URL = 'https://accounts.zoho.com/oauth/v2/auth';
+const getZohoAuthUrl = (region) => {
+  return region === 'com'
+    ? 'https://accounts.zoho.com/oauth/v2/auth'
+    : 'https://accounts.zoho.in/oauth/v2/auth';
+};
 const REDIRECT_URI  = 'http://localhost:3000/setup';
 const DJANGO_BASE   = 'http://127.0.0.1:8000';
 
@@ -22,6 +26,7 @@ const SyncDataFlow = () => {
     access_token:    '',
     refresh_token:   '',
     organization_id: '',
+    region:          'in',
   });
 
   
@@ -43,6 +48,7 @@ const SyncDataFlow = () => {
     const savedClientId     = sessionStorage.getItem('zoho_client_id');
     const savedClientSecret = sessionStorage.getItem('zoho_client_secret');
     const savedOrgId        = sessionStorage.getItem('zoho_org_id');
+    const savedRegion       = sessionStorage.getItem('zoho_region') || 'in';
 
     if (!savedClientId || !savedClientSecret) {
       showSnackbarAlert('Session expired. Please enter your Client ID & Secret again and retry.', 'error');
@@ -55,6 +61,7 @@ const SyncDataFlow = () => {
       client_id:       savedClientId,
       client_secret:   savedClientSecret,
       organization_id: savedOrgId || prev.organization_id,
+      region:          savedRegion, 
     }));
 
     exchangeCodeForTokens(code, savedClientId, savedClientSecret, savedOrgId);
@@ -74,7 +81,7 @@ const SyncDataFlow = () => {
         }
       );
 
-      const { access_token, refresh_token } = response.data;
+      const { access_token, refresh_token, api_base_url } = response.data;
 
       setFormData(prev => ({
         ...prev,
@@ -83,12 +90,14 @@ const SyncDataFlow = () => {
         organization_id: orgId || prev.organization_id,
         access_token,
         refresh_token,
+        api_base_url,
       }));
 
       // Clean up sessionStorage
       sessionStorage.removeItem('zoho_client_id');
       sessionStorage.removeItem('zoho_client_secret');
       sessionStorage.removeItem('zoho_org_id');
+      sessionStorage.removeItem('zoho_region'); 
 
       showSnackbarAlert('Tokens generated successfully! Review and click "Connect & Proceed".', 'success');
     } catch (err) {
@@ -101,34 +110,33 @@ const SyncDataFlow = () => {
 
   // ─── "Generate Tokens" button handler ─────────────────────────────────────
   const handleGenerateTokens = () => {
-    const { client_id, client_secret } = formData;
+  const { client_id, client_secret, region } = formData;
 
-    if (!client_id.trim()) {
-      showSnackbarAlert('Please enter your Client ID first.', 'error');
-      return;
-    }
-    if (!client_secret.trim()) {
-      showSnackbarAlert('Please enter your Client Secret first.', 'error');
-      return;
-    }
+  if (!client_id.trim()) {
+    showSnackbarAlert('Please enter your Client ID first.', 'error');
+    return;
+  }
+  if (!client_secret.trim()) {
+    showSnackbarAlert('Please enter your Client Secret first.', 'error');
+    return;
+  }
 
-    // Save credentials to sessionStorage so we can retrieve them after redirect
-    sessionStorage.setItem('zoho_client_id',     client_id.trim());
-    sessionStorage.setItem('zoho_client_secret', client_secret.trim());
-    sessionStorage.setItem('zoho_org_id',        formData.organization_id.trim());
+  sessionStorage.setItem('zoho_client_id',     client_id.trim());
+  sessionStorage.setItem('zoho_client_secret', client_secret.trim());
+  sessionStorage.setItem('zoho_org_id',        formData.organization_id.trim());
+  sessionStorage.setItem('zoho_region',        region);   // ← ADD
 
-    // Build Zoho OAuth URL and redirect the browser
-    const authParams = new URLSearchParams({
-      response_type: 'code',
-      client_id:     client_id.trim(),
-      scope:         'ZohoBooks.fullaccess.all',
-      redirect_uri:  REDIRECT_URI,
-      access_type:   'offline',
-      prompt:        'consent',
-    });
+  const authParams = new URLSearchParams({
+    response_type: 'code',
+    client_id:     client_id.trim(),
+    scope:         'ZohoBooks.fullaccess.all',
+    redirect_uri:  REDIRECT_URI,
+    access_type:   'offline',
+    prompt:        'login',
+  });
 
-    window.location.href = `${ZOHO_AUTH_URL}?${authParams.toString()}`;
-  };
+  window.location.href = `${getZohoAuthUrl(region)}?${authParams.toString()}`;
+};
 
   // ─── Steps definition ──────────────────────────────────────────────────────
   const steps = [
@@ -390,6 +398,18 @@ const SyncDataFlow = () => {
               {currentStep === 0 && (
                 <div className="form-container">
                   <h3 className="form-title">Enter Zoho Books API Credentials :</h3>
+
+                  <div className="form-field">
+                    <label className="field-label">Zoho Account Region:</label>
+                    <select
+                      className="field-input"
+                      value={formData.region}
+                      onChange={e => handleFieldChange('region', e.target.value)}
+                    >
+                      <option value="in">India (.in)</option>
+                      <option value="com">Global (.com)</option>
+                    </select>
+                  </div>
 
                   {/* Client ID */}
                   <div className="form-field">

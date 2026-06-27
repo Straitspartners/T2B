@@ -1,18 +1,17 @@
 {
     "tally_url": "http://localhost:9000",
-    "auth_url": "http://localhost:8000/api/generate_token_agent/",
-    "django_api_url": "http://localhost:8000/api/users/ledgers/",
-    "django_url_vendors": "http://localhost:8000/api/users/vendors/",
-    "django_url_accounts": "http://localhost:8000/api/users/accounts/",
-    "django_url_items": "http://localhost:8000/api/users/items/",
-    "django_url_invoices": "http://localhost:8000/api/users/invoices/",
-    "django_url_receipts": "http://localhost:8000/api/users/receipts/",
-
-    "django_url_purchases": "http://localhost:8000/api/users/purchases/",
-    "django_url_payments": "http://localhost:8000/api/users/payments/",
-    "django_url_credit_notes": "http://localhost:8000/api/users/credit-notes/",
-    "django_url_vendor_credits": "http://localhost:8000/api/users/vendor-credits/",
-    "django_url_journals": "http://localhost:8000/api/users/journals/",
-    "django_url_expenses": "http://localhost:8000/api/users/expenses/",
-    "django_url_opening_balances": "http://localhost:8000/api/users/opening-balances/"
+    "auth_url": "http://localhost:8000/api/agent-token/",
+    "django_api_url": "http://localhost:8000/api/receive-customers/",
+    "django_url_vendors": "http://localhost:8000/api/receive-vendors/",
+    "django_url_accounts": "http://localhost:8000/api/receive-accounts/",
+    "django_url_items": "http://localhost:8000/api/receive-items/",
+    "django_url_invoices": "http://localhost:8000/api/receive-invoices/",
+    "django_url_receipts": "http://localhost:8000/api/receive-receipts/",
+    "django_url_purchases": "http://localhost:8000/api/receive-purchases/",
+    "django_url_payments": "http://localhost:8000/api/receive-payments/",
+    "django_url_credit_notes": "http://localhost:8000/api/receive-credit-notes/",
+    "django_url_vendor_credits": "http://localhost:8000/api/receive-vendor-credits/",
+    "django_url_journals": "http://localhost:8000/api/receive-journals/",
+    "django_url_expenses": "http://localhost:8000/api/receive-expenses/",
+    "django_url_opening_balances": "http://localhost:8000/api/receive-opening-balances/"
 }
